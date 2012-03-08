@@ -16,7 +16,7 @@
 #include <parlib/parlib.h>
 #include <parlib/vcore.h>
 #include <parlib/mcs.h>
-#include <rrthread/bthread.h>
+#include "upthread.h"
 
 #define printd(...)
 

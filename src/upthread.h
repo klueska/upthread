@@ -121,7 +121,7 @@ typedef int bthread_once_t;
 typedef void** bthread_key_t;
 
 /* The bthreads API */
-#include <bthread_api.h>
+#include "upthread_api.h"
 
 #ifdef __cplusplus
   }
