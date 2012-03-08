@@ -11,9 +11,9 @@
 #include <sys/queue.h>
 #include <parlib/vcore.h>
 #include <parlib/uthread.h>
-/* The actual bthread_api.h file is #included at the bottom of this file Users
- * of the bthread API need to include the location of this file in their
- * include path in order to use bthreads.  Other bthread implementations should
+/* The actual upthread_api.h file is #included at the bottom of this file Users
+ * of the upthread API need to include the location of this file in their
+ * include path in order to use upthreads.  Other upthread implementations should
  * follow the same pattern.
  */
 
@@ -25,10 +25,10 @@
 #define PTHREAD_EXITING		0x001
 
 /* Pthread struct.  First has to be the uthread struct, which the vcore code
- * will access directly (as if bthread_tcb is a struct uthread). */
-struct bthread_tcb {
+ * will access directly (as if upthread_tcb is a struct uthread). */
+struct upthread_tcb {
 	struct uthread uthread;
-	TAILQ_ENTRY(bthread_tcb) next;
+	TAILQ_ENTRY(upthread_tcb) next;
 	int finished;
 	bool detached;
 	int flags;
@@ -39,8 +39,8 @@ struct bthread_tcb {
 	void *stack;
 	void *retval;
 };
-typedef struct bthread_tcb* bthread_t;
-TAILQ_HEAD(bthread_queue, bthread_tcb);
+typedef struct upthread_tcb* upthread_t;
+TAILQ_HEAD(upthread_queue, upthread_tcb);
 
 #define BTHREAD_ONCE_INIT 0
 #define BTHREAD_BARRIER_SERIAL_THREAD 12345
@@ -55,16 +55,16 @@ TAILQ_HEAD(bthread_queue, bthread_tcb);
 typedef struct
 {
   int type;
-} bthread_mutexattr_t;
+} upthread_mutexattr_t;
 
 typedef struct
 {
-  const bthread_mutexattr_t* attr;
+  const upthread_mutexattr_t* attr;
   int lock;
-} bthread_mutex_t;
+} upthread_mutex_t;
 
-#define bthread_rwlock_t bthread_mutex_t
-#define bthread_rwlockattr_t bthread_mutexattr_t
+#define upthread_rwlock_t upthread_mutex_t
+#define upthread_rwlockattr_t upthread_mutexattr_t
 
 /* TODO: MAX_BTHREADS is arbitrarily defined for now.
  * It indicates the maximum number of threads that can wait on  
@@ -76,8 +76,8 @@ typedef struct
   volatile int sense;
   int count;
   int nprocs;
-  bthread_mutex_t pmutex;
-} bthread_barrier_t;
+  upthread_mutex_t pmutex;
+} upthread_barrier_t;
 
 #define WAITER_CLEARED 0
 #define WAITER_WAITING 1
@@ -101,26 +101,26 @@ enum
 typedef struct
 {
   int pshared;
-} bthread_condattr_t;
+} upthread_condattr_t;
 
 
 typedef struct
 {
-  const bthread_condattr_t* attr;
+  const upthread_condattr_t* attr;
   int waiters[MAX_BTHREADS];
   int in_use[MAX_BTHREADS];
   int next_waiter; //start the search for an available waiter at this spot
-} bthread_cond_t;
+} upthread_cond_t;
 typedef struct 
 {
 	size_t stacksize;
 	int detachstate;
-} bthread_attr_t;
-typedef int bthread_barrierattr_t;
-typedef int bthread_once_t;
-typedef void** bthread_key_t;
+} upthread_attr_t;
+typedef int upthread_barrierattr_t;
+typedef int upthread_once_t;
+typedef void** upthread_key_t;
 
-/* The bthreads API */
+/* The upthreads API */
 #include "upthread_api.h"
 
 #ifdef __cplusplus

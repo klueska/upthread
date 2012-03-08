@@ -8,57 +8,57 @@
 #ifndef _BTHREAD_API_H
 #define _BTHREAD_API_H
 
-int bthread_attr_init(bthread_attr_t *);
-int bthread_attr_destroy(bthread_attr_t *);
-int bthread_create(bthread_t *, const bthread_attr_t *,
+int upthread_attr_init(upthread_attr_t *);
+int upthread_attr_destroy(upthread_attr_t *);
+int upthread_create(upthread_t *, const upthread_attr_t *,
                    void *(*)(void *), void *);
-int bthread_join(bthread_t, void **);
-int bthread_yield(void);
+int upthread_join(upthread_t, void **);
+int upthread_yield(void);
 
-int bthread_attr_setdetachstate(bthread_attr_t *__attr,int __detachstate);
+int upthread_attr_setdetachstate(upthread_attr_t *__attr,int __detachstate);
 
-int bthread_mutex_destroy(bthread_mutex_t *);
-int bthread_mutex_init(bthread_mutex_t *, const bthread_mutexattr_t *);
-int bthread_mutex_lock(bthread_mutex_t *);
-int bthread_mutex_trylock(bthread_mutex_t *);
-int bthread_mutex_unlock(bthread_mutex_t *);
-int bthread_mutex_destroy(bthread_mutex_t *);
+int upthread_mutex_destroy(upthread_mutex_t *);
+int upthread_mutex_init(upthread_mutex_t *, const upthread_mutexattr_t *);
+int upthread_mutex_lock(upthread_mutex_t *);
+int upthread_mutex_trylock(upthread_mutex_t *);
+int upthread_mutex_unlock(upthread_mutex_t *);
+int upthread_mutex_destroy(upthread_mutex_t *);
 
-int bthread_mutexattr_init(bthread_mutexattr_t *);
-int bthread_mutexattr_destroy(bthread_mutexattr_t *);
-int bthread_mutexattr_gettype(const bthread_mutexattr_t *, int *);
-int bthread_mutexattr_settype(bthread_mutexattr_t *, int);
+int upthread_mutexattr_init(upthread_mutexattr_t *);
+int upthread_mutexattr_destroy(upthread_mutexattr_t *);
+int upthread_mutexattr_gettype(const upthread_mutexattr_t *, int *);
+int upthread_mutexattr_settype(upthread_mutexattr_t *, int);
 
-int bthread_cond_init(bthread_cond_t *, const bthread_condattr_t *);
-int bthread_cond_destroy(bthread_cond_t *);
-int bthread_cond_broadcast(bthread_cond_t *);
-int bthread_cond_signal(bthread_cond_t *);
-int bthread_cond_wait(bthread_cond_t *, bthread_mutex_t *);
+int upthread_cond_init(upthread_cond_t *, const upthread_condattr_t *);
+int upthread_cond_destroy(upthread_cond_t *);
+int upthread_cond_broadcast(upthread_cond_t *);
+int upthread_cond_signal(upthread_cond_t *);
+int upthread_cond_wait(upthread_cond_t *, upthread_mutex_t *);
 
-int bthread_condattr_init(bthread_condattr_t *);
-int bthread_condattr_destroy(bthread_condattr_t *);
-int bthread_condattr_setpshared(bthread_condattr_t *, int);
-int bthread_condattr_getpshared(bthread_condattr_t *, int *);
+int upthread_condattr_init(upthread_condattr_t *);
+int upthread_condattr_destroy(upthread_condattr_t *);
+int upthread_condattr_setpshared(upthread_condattr_t *, int);
+int upthread_condattr_getpshared(upthread_condattr_t *, int *);
 
-int bthread_rwlock_destroy(bthread_mutex_t *);
-int bthread_rwlock_init(bthread_mutex_t *, const bthread_mutexattr_t *);
-int bthread_rwlock_unlock(bthread_mutex_t *);
-int bthread_rwlock_rdlock(bthread_mutex_t *);
-int bthread_rwlock_wrlock(bthread_mutex_t *);
-int bthread_rwlock_tryrdlock(bthread_mutex_t *);
-int bthread_rwlock_trywrlock(bthread_mutex_t *);
+int upthread_rwlock_destroy(upthread_mutex_t *);
+int upthread_rwlock_init(upthread_mutex_t *, const upthread_mutexattr_t *);
+int upthread_rwlock_unlock(upthread_mutex_t *);
+int upthread_rwlock_rdlock(upthread_mutex_t *);
+int upthread_rwlock_wrlock(upthread_mutex_t *);
+int upthread_rwlock_tryrdlock(upthread_mutex_t *);
+int upthread_rwlock_trywrlock(upthread_mutex_t *);
 
-bthread_t bthread_self();
-int bthread_equal(bthread_t t1, bthread_t t2);
-void bthread_exit(void* ret);
-int bthread_once(bthread_once_t* once_control, void (*init_routine)(void));
+upthread_t upthread_self();
+int upthread_equal(upthread_t t1, upthread_t t2);
+void upthread_exit(void* ret);
+int upthread_once(upthread_once_t* once_control, void (*init_routine)(void));
 
-int bthread_barrier_init(bthread_barrier_t* b, const bthread_barrierattr_t* a, int count);
-int bthread_barrier_wait(bthread_barrier_t* b);
-int bthread_barrier_destroy(bthread_barrier_t* b);
+int upthread_barrier_init(upthread_barrier_t* b, const upthread_barrierattr_t* a, int count);
+int upthread_barrier_wait(upthread_barrier_t* b);
+int upthread_barrier_destroy(upthread_barrier_t* b);
 
-int bthread_detach(bthread_t __th);
-int bthread_attr_setstacksize(bthread_attr_t *attr, size_t stacksize);
-int bthread_attr_getstacksize(const bthread_attr_t *attr, size_t *stacksize);
+int upthread_detach(upthread_t __th);
+int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize);
+int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize);
 
 #endif

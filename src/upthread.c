@@ -20,10 +20,10 @@
 
 #define printd(...)
 
-struct bthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
-struct bthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
+struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
+struct upthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
 mcs_lock_t queue_lock = MCS_LOCK_INIT;
-bthread_once_t init_once = BTHREAD_ONCE_INIT;
+upthread_once_t init_once = BTHREAD_ONCE_INIT;
 int threads_ready = 0;
 int threads_active = 0;
 
@@ -38,7 +38,7 @@ void pth_thread_yield(struct uthread *uthread);
 void pth_preempt_pending(void);
 void pth_spawn_thread(uintptr_t pc_start, void *data);
 
-struct schedule_ops bthread_sched_ops = {
+struct schedule_ops upthread_sched_ops = {
 	pth_sched_entry,
 	pth_thread_runnable,
 	pth_thread_yield,
@@ -47,11 +47,11 @@ struct schedule_ops bthread_sched_ops = {
 };
 
 /* Publish our sched_ops, overriding the weak defaults */
-struct schedule_ops *sched_ops __attribute__((weak)) = &bthread_sched_ops;
+struct schedule_ops *sched_ops __attribute__((weak)) = &upthread_sched_ops;
 
 /* Static helpers */
-static void __bthread_free_stack(struct bthread_tcb *pt);
-static int __bthread_allocate_stack(struct bthread_tcb *pt);
+static void __upthread_free_stack(struct upthread_tcb *pt);
+static int __upthread_allocate_stack(struct upthread_tcb *pt);
 
 /* Called from vcore entry.  Options usually include restarting whoever was
  * running there before or running a new thread.  Events are handled out of
@@ -63,7 +63,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		assert(0);
 	}
 	/* no one currently running, so lets get someone from the ready queue */
-	struct bthread_tcb *new_thread = NULL;
+	struct upthread_tcb *new_thread = NULL;
 	struct mcs_lock_qnode local_qn = {0};
 	mcs_lock_lock(&queue_lock, &local_qn);
 	new_thread = TAILQ_FIRST(&ready_queue);
@@ -88,37 +88,37 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 }
 
 /* Could move this, along with start_routine and arg, into the 2LSs */
-static void __bthread_run(void)
+static void __upthread_run(void)
 {
-	struct bthread_tcb *me = bthread_self();
-	bthread_exit(me->start_routine(me->arg));
+	struct upthread_tcb *me = upthread_self();
+	upthread_exit(me->start_routine(me->arg));
 }
 
 void pth_thread_runnable(struct uthread *uthread)
 {
-	struct bthread_tcb *bthread = (struct bthread_tcb*)uthread;
+	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
 	struct mcs_lock_qnode local_qn = {0};
 	/* Insert the newly created thread into the ready queue of threads.
 	 * It will be removed from this queue later when vcore_entry() comes up */
 	mcs_lock_lock(&queue_lock, &local_qn);
-	TAILQ_INSERT_TAIL(&ready_queue, bthread, next);
+	TAILQ_INSERT_TAIL(&ready_queue, upthread, next);
 	threads_ready++;
 	mcs_lock_unlock(&queue_lock, &local_qn);
 	vcore_request(threads_ready);
 }
 
-static void __bthread_destroy(struct bthread_tcb *bthread)
+static void __upthread_destroy(struct upthread_tcb *upthread)
 {
 	/* Cleanup the underlying uthread */
-	uthread_cleanup(&bthread->uthread);
+	uthread_cleanup(&upthread->uthread);
 
-	/* Cleanup, mirroring bthread_create() */
-	__bthread_free_stack(bthread);
+	/* Cleanup, mirroring upthread_create() */
+	__upthread_free_stack(upthread);
 	/* TODO: race on detach state */
-	if (bthread->detached)
-		free(bthread);
+	if (upthread->detached)
+		free(upthread);
 	else
-		bthread->finished = 1;
+		upthread->finished = 1;
 }
 
 /* The calling thread is yielding.  Do what you need to do to restart (like put
@@ -126,22 +126,22 @@ static void __bthread_destroy(struct bthread_tcb *bthread)
  * little more generic than just yield. */
 void pth_thread_yield(struct uthread *uthread)
 {
-	struct bthread_tcb *bthread = (struct bthread_tcb*)uthread;
+	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
 	struct mcs_lock_qnode local_qn = {0};
 	/* Remove from the active list, whether exiting or yielding.  We're holding
 	 * the lock throughout both list modifications (if applicable). */
 	mcs_lock_lock(&queue_lock, &local_qn);
 	threads_active--;
-	TAILQ_REMOVE(&active_queue, bthread, next);
-	if (bthread->flags & PTHREAD_EXITING) {
+	TAILQ_REMOVE(&active_queue, upthread, next);
+	if (upthread->flags & PTHREAD_EXITING) {
 		mcs_lock_unlock(&queue_lock, &local_qn);
-		__bthread_destroy(bthread);
+		__upthread_destroy(upthread);
 	} else {
 		/* Put it on the ready list (tail).  Don't do this until we are done
 		 * completely with the thread, since it can be restarted somewhere else.
 		 * */
 		threads_ready++;
-		TAILQ_INSERT_TAIL(&ready_queue, bthread, next);
+		TAILQ_INSERT_TAIL(&ready_queue, upthread, next);
 		mcs_lock_unlock(&queue_lock, &local_qn);
 	}
 }
@@ -156,25 +156,25 @@ void pth_spawn_thread(uintptr_t pc_start, void *data)
 
 /* Pthread interface stuff and helpers */
 
-int bthread_attr_init(bthread_attr_t *a)
+int upthread_attr_init(upthread_attr_t *a)
 {
  	a->stacksize = BTHREAD_STACK_SIZE;
 	a->detachstate = BTHREAD_CREATE_JOINABLE;
   	return 0;
 }
 
-int bthread_attr_destroy(bthread_attr_t *a)
+int upthread_attr_destroy(upthread_attr_t *a)
 {
 	return 0;
 }
 
-static void __bthread_free_stack(struct bthread_tcb *pt)
+static void __upthread_free_stack(struct upthread_tcb *pt)
 {
 //	assert(!munmap(pt->stack, pt->stacksize));
 	free(pt->stack);
 }
 
-static int __bthread_allocate_stack(struct bthread_tcb *pt)
+static int __upthread_allocate_stack(struct upthread_tcb *pt)
 {
 	assert(pt->stacksize);
 //	void* stackbot = mmap(0, pt->stacksize,
@@ -195,12 +195,12 @@ static int get_next_pid(void)
 	return next_pid++;
 }
 
-int bthread_attr_setstacksize(bthread_attr_t *attr, size_t stacksize)
+int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize)
 {
 	attr->stacksize = stacksize;
 	return 0;
 }
-int bthread_attr_getstacksize(const bthread_attr_t *attr, size_t *stacksize)
+int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
 {
 	*stacksize = attr->stacksize;
 	return 0;
@@ -208,7 +208,7 @@ int bthread_attr_getstacksize(const bthread_attr_t *attr, size_t *stacksize)
 
 /* Do whatever init you want.  At some point call uthread_lib_init() and pass it
  * a uthread representing thread0 (int main()) */
-static int bthread_lib_init(void)
+static int upthread_lib_init(void)
 {
     /* Make sure this only runs once */
     static bool initialized = false;
@@ -217,12 +217,12 @@ static int bthread_lib_init(void)
     initialized = true;
 
 	struct mcs_lock_qnode local_qn = {0};
-	bthread_t t = (bthread_t)calloc(1, sizeof(struct bthread_tcb));
+	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
 	assert(t);
 	t->id = get_next_pid();
 	assert(t->id == 0);
 
-	/* Put the new bthread on the active queue */
+	/* Put the new upthread on the active queue */
 	mcs_lock_lock(&queue_lock, &local_qn);
 	threads_active++;
 	TAILQ_INSERT_TAIL(&active_queue, t, next);
@@ -231,100 +231,100 @@ static int bthread_lib_init(void)
     return 0;
 }
 
-/* Responible for creating the bthread and initializing its user trap frame */
-int bthread_create(bthread_t* thread, const bthread_attr_t* attr,
+/* Responible for creating the upthread and initializing its user trap frame */
+int upthread_create(upthread_t* thread, const upthread_attr_t* attr,
                    void *(*start_routine)(void *), void* arg)
 {
     static bool first = true;
     if (first) {
-        assert(!bthread_lib_init());
+        assert(!upthread_lib_init());
         first = false;
     }
 
-	/* Create a bthread struct */
-	struct bthread_tcb *bthread;
-	bthread = (bthread_t)calloc(1, sizeof(struct bthread_tcb));
-	assert(bthread);
+	/* Create a upthread struct */
+	struct upthread_tcb *upthread;
+	upthread = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
+	assert(upthread);
 
 	/* Initialize the basics of the underlying uthread */
-	uthread_init(&bthread->uthread);
+	uthread_init(&upthread->uthread);
 
-	/* Initialize bthread state */
-	bthread->stacksize = BTHREAD_STACK_SIZE;	/* default */
-	bthread->id = get_next_pid();
-	bthread->detached = FALSE;				/* default */
-	bthread->flags = 0;
-	bthread->finished = FALSE;				/* default */
+	/* Initialize upthread state */
+	upthread->stacksize = BTHREAD_STACK_SIZE;	/* default */
+	upthread->id = get_next_pid();
+	upthread->detached = FALSE;				/* default */
+	upthread->flags = 0;
+	upthread->finished = FALSE;				/* default */
 	/* Respect the attributes */
 	if (attr) {
 		if (attr->stacksize)					/* don't set a 0 stacksize */
-			bthread->stacksize = attr->stacksize;
+			upthread->stacksize = attr->stacksize;
 		if (attr->detachstate == BTHREAD_CREATE_DETACHED)
-			bthread->detached = TRUE;
+			upthread->detached = TRUE;
 	}
 	/* allocate a stack */
-	if (__bthread_allocate_stack(bthread))
+	if (__upthread_allocate_stack(upthread))
 		printf("We're fucked\n");
 
-	/* Set the u_tf to start up in __bthread_run, which will call the real
+	/* Set the u_tf to start up in __upthread_run, which will call the real
 	 * start_routine and pass it the arg.  Note those aren't set until later in
-	 * bthread_create(). */
-	init_uthread_tf(&bthread->uthread, __bthread_run, bthread->stack, bthread->stacksize); 
+	 * upthread_create(). */
+	init_uthread_tf(&upthread->uthread, __upthread_run, upthread->stack, upthread->stacksize); 
 
-	bthread->start_routine = start_routine;
-	bthread->arg = arg;
-	uthread_runnable((struct uthread*)bthread);
-	*thread = bthread;
+	upthread->start_routine = start_routine;
+	upthread->arg = arg;
+	uthread_runnable((struct uthread*)upthread);
+	*thread = upthread;
 	return 0;
 }
 
-int bthread_join(bthread_t thread, void** retval)
+int upthread_join(upthread_t thread, void** retval)
 {
 	/* Not sure if this is the right semantics.  There is a race if we deref
 	 * thread and he is already freed (which would have happened if he was
 	 * detached. */
 	if (thread->detached) {
-		printf("[bthread] trying to join on a detached bthread");
+		printf("[upthread] trying to join on a detached upthread");
 		return -1;
 	}
 	while (!thread->finished)
-		bthread_yield();
+		upthread_yield();
 	if (retval)
 		*retval = thread->retval;
 	free(thread);
 	return 0;
 }
 
-int bthread_yield(void)
+int upthread_yield(void)
 {
 	uthread_yield(true);
 	return 0;
 }
 
-int bthread_mutexattr_init(bthread_mutexattr_t* attr)
+int upthread_mutexattr_init(upthread_mutexattr_t* attr)
 {
   attr->type = BTHREAD_MUTEX_DEFAULT;
   return 0;
 }
 
-int bthread_mutexattr_destroy(bthread_mutexattr_t* attr)
+int upthread_mutexattr_destroy(upthread_mutexattr_t* attr)
 {
   return 0;
 }
 
-int bthread_attr_setdetachstate(bthread_attr_t *__attr, int __detachstate)
+int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
 {
 	__attr->detachstate = __detachstate;
 	return 0;
 }
 
-int bthread_mutexattr_gettype(const bthread_mutexattr_t* attr, int* type)
+int upthread_mutexattr_gettype(const upthread_mutexattr_t* attr, int* type)
 {
   *type = attr ? attr->type : BTHREAD_MUTEX_DEFAULT;
   return 0;
 }
 
-int bthread_mutexattr_settype(bthread_mutexattr_t* attr, int type)
+int upthread_mutexattr_settype(upthread_mutexattr_t* attr, int type)
 {
   if(type != BTHREAD_MUTEX_NORMAL)
     return EINVAL;
@@ -332,7 +332,7 @@ int bthread_mutexattr_settype(bthread_mutexattr_t* attr, int type)
   return 0;
 }
 
-int bthread_mutex_init(bthread_mutex_t* m, const bthread_mutexattr_t* attr)
+int upthread_mutex_init(upthread_mutex_t* m, const upthread_mutexattr_t* attr)
 {
   m->attr = attr;
   m->lock = 0;
@@ -344,15 +344,15 @@ int bthread_mutex_init(bthread_mutex_t* m, const bthread_mutexattr_t* attr)
 static inline void spin_to_sleep(unsigned int spins, unsigned int *spun)
 {
 	if ((*spun)++ == spins) {
-		bthread_yield();
+		upthread_yield();
 		*spun = 0;
 	}
 }
 
-int bthread_mutex_lock(bthread_mutex_t* m)
+int upthread_mutex_lock(upthread_mutex_t* m)
 {
 	unsigned int spinner = 0;
-	while(bthread_mutex_trylock(m))
+	while(upthread_mutex_trylock(m))
 		while(*(volatile size_t*)&m->lock) {
 			cpu_relax();
 			spin_to_sleep(BTHREAD_MUTEX_SPINS, &spinner);
@@ -360,12 +360,12 @@ int bthread_mutex_lock(bthread_mutex_t* m)
 	return 0;
 }
 
-int bthread_mutex_trylock(bthread_mutex_t* m)
+int upthread_mutex_trylock(upthread_mutex_t* m)
 {
   return atomic_exchange_acq(&m->lock,1) == 0 ? 0 : EBUSY;
 }
 
-int bthread_mutex_unlock(bthread_mutex_t* m)
+int upthread_mutex_unlock(upthread_mutex_t* m)
 {
   /* Need to prevent the compiler (and some arches) from reordering older
    * stores */
@@ -374,12 +374,12 @@ int bthread_mutex_unlock(bthread_mutex_t* m)
   return 0;
 }
 
-int bthread_mutex_destroy(bthread_mutex_t* m)
+int upthread_mutex_destroy(upthread_mutex_t* m)
 {
   return 0;
 }
 
-int bthread_cond_init(bthread_cond_t *c, const bthread_condattr_t *a)
+int upthread_cond_init(upthread_cond_t *c, const upthread_condattr_t *a)
 {
   c->attr = a;
   memset(c->waiters,0,sizeof(c->waiters));
@@ -388,18 +388,18 @@ int bthread_cond_init(bthread_cond_t *c, const bthread_condattr_t *a)
   return 0;
 }
 
-int bthread_cond_destroy(bthread_cond_t *c)
+int upthread_cond_destroy(upthread_cond_t *c)
 {
   return 0;
 }
 
-int bthread_cond_broadcast(bthread_cond_t *c)
+int upthread_cond_broadcast(upthread_cond_t *c)
 {
   memset(c->waiters,0,sizeof(c->waiters));
   return 0;
 }
 
-int bthread_cond_signal(bthread_cond_t *c)
+int upthread_cond_signal(upthread_cond_t *c)
 {
   int i;
   for(i = 0; i < MAX_BTHREADS; i++)
@@ -413,7 +413,7 @@ int bthread_cond_signal(bthread_cond_t *c)
   return 0;
 }
 
-int bthread_cond_wait(bthread_cond_t *c, bthread_mutex_t *m)
+int upthread_cond_wait(upthread_cond_t *c, upthread_mutex_t *m)
 {
   int old_waiter = c->next_waiter;
   int my_waiter = c->next_waiter;
@@ -427,87 +427,87 @@ int bthread_cond_wait(bthread_cond_t *c, bthread_mutex_t *m)
   c->waiters[my_waiter] = WAITER_WAITING;
   c->next_waiter = (my_waiter+1) % MAX_BTHREADS;  // race on next_waiter but ok, because it is advisary
 
-  bthread_mutex_unlock(m);
+  upthread_mutex_unlock(m);
 
   volatile int* poll = &c->waiters[my_waiter];
   while(*poll);
   c->in_use[my_waiter] = SLOT_FREE;
-  bthread_mutex_lock(m);
+  upthread_mutex_lock(m);
 
   return 0;
 }
 
-int bthread_condattr_init(bthread_condattr_t *a)
+int upthread_condattr_init(upthread_condattr_t *a)
 {
   a = BTHREAD_PROCESS_PRIVATE;
   return 0;
 }
 
-int bthread_condattr_destroy(bthread_condattr_t *a)
+int upthread_condattr_destroy(upthread_condattr_t *a)
 {
   return 0;
 }
 
-int bthread_condattr_setpshared(bthread_condattr_t *a, int s)
+int upthread_condattr_setpshared(upthread_condattr_t *a, int s)
 {
   a->pshared = s;
   return 0;
 }
 
-int bthread_condattr_getpshared(bthread_condattr_t *a, int *s)
+int upthread_condattr_getpshared(upthread_condattr_t *a, int *s)
 {
   *s = a->pshared;
   return 0;
 }
 
-bthread_t bthread_self()
+upthread_t upthread_self()
 {
-  return (struct bthread_tcb*)current_uthread;
+  return (struct upthread_tcb*)current_uthread;
 }
 
-int bthread_equal(bthread_t t1, bthread_t t2)
+int upthread_equal(upthread_t t1, upthread_t t2)
 {
   return t1 == t2;
 }
 
 /* This function cannot be migrated to a different vcore by the userspace
  * scheduler.  Will need to sort that shit out. */
-void bthread_exit(void *ret)
+void upthread_exit(void *ret)
 {
-	struct bthread_tcb *bthread = bthread_self();
-	bthread->retval = ret;
+	struct upthread_tcb *upthread = upthread_self();
+	upthread->retval = ret;
 	/* So our pth_thread_yield knows we want to exit */
-	bthread->flags |= PTHREAD_EXITING;
+	upthread->flags |= PTHREAD_EXITING;
 	uthread_yield(false);
 }
 
-int bthread_once(bthread_once_t* once_control, void (*init_routine)(void))
+int upthread_once(upthread_once_t* once_control, void (*init_routine)(void))
 {
   if(atomic_exchange_acq(once_control,1) == 0)
     init_routine();
   return 0;
 }
 
-int bthread_barrier_init(bthread_barrier_t* b, const bthread_barrierattr_t* a, int count)
+int upthread_barrier_init(upthread_barrier_t* b, const upthread_barrierattr_t* a, int count)
 {
   b->nprocs = b->count = count;
   b->sense = 0;
-  bthread_mutex_init(&b->pmutex, 0);
+  upthread_mutex_init(&b->pmutex, 0);
   return 0;
 }
 
-int bthread_barrier_wait(bthread_barrier_t* b)
+int upthread_barrier_wait(upthread_barrier_t* b)
 {
   unsigned int spinner = 0;
   int ls = !b->sense;
 
-  bthread_mutex_lock(&b->pmutex);
+  upthread_mutex_lock(&b->pmutex);
   int count = --b->count;
-  bthread_mutex_unlock(&b->pmutex);
+  upthread_mutex_unlock(&b->pmutex);
 
   if(count == 0)
   {
-    printd("Thread %d is last to hit the barrier, resetting...\n", bthread_self()->id);
+    printd("Thread %d is last to hit the barrier, resetting...\n", upthread_self()->id);
     b->count = b->nprocs;
     wmb();
     b->sense = ls;
@@ -523,24 +523,24 @@ int bthread_barrier_wait(bthread_barrier_t* b)
   }
 }
 
-int bthread_barrier_destroy(bthread_barrier_t* b)
+int upthread_barrier_destroy(upthread_barrier_t* b)
 {
-  bthread_mutex_destroy(&b->pmutex);
+  upthread_mutex_destroy(&b->pmutex);
   return 0;
 }
 
-int bthread_detach(bthread_t thread)
+int upthread_detach(upthread_t thread)
 {
 	thread->detached = TRUE;
 	return 0;
 }
 
-#define bthread_rwlock_t bthread_mutex_t
-#define bthread_rwlockattr_t bthread_mutexattr_t
-#define bthread_rwlock_destroy bthread_mutex_destroy
-#define bthread_rwlock_init bthread_mutex_init
-#define bthread_rwlock_unlock bthread_mutex_unlock
-#define bthread_rwlock_rdlock bthread_mutex_lock
-#define bthread_rwlock_wrlock bthread_mutex_lock
-#define bthread_rwlock_tryrdlock bthread_mutex_trylock
-#define bthread_rwlock_trywrlock bthread_mutex_trylock
+#define upthread_rwlock_t upthread_mutex_t
+#define upthread_rwlockattr_t upthread_mutexattr_t
+#define upthread_rwlock_destroy upthread_mutex_destroy
+#define upthread_rwlock_init upthread_mutex_init
+#define upthread_rwlock_unlock upthread_mutex_unlock
+#define upthread_rwlock_rdlock upthread_mutex_lock
+#define upthread_rwlock_wrlock upthread_mutex_lock
+#define upthread_rwlock_tryrdlock upthread_mutex_trylock
+#define upthread_rwlock_trywrlock upthread_mutex_trylock
