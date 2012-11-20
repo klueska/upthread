@@ -11,7 +11,6 @@ LIB_CFILES = \
   @SRCDIR@/upthread.c
 
 LIB_HFILES = \
-  @SRCDIR@/upthread_api.h \
   @SRCDIR@/upthread.h
 
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)

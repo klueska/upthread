@@ -1,31 +1,27 @@
-/*
- * Copyright (c) 2011 The Regents of the University of California
- * Barret Rhoden <brho@cs.berkeley.edu>
- * Kevin Klues <klueska@cs.berkeley.edu>
- * See LICENSE for details.
- */
-
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
-#include <errno.h>
-#include <sys/queue.h>
-#include <sys/mman.h>
-#include <assert.h>
 #include <stdio.h>
+#include <errno.h>
+#include <assert.h>
+#include <sys/mman.h>
 #include <parlib/parlib.h>
-#include <parlib/vcore.h>
+#include <parlib/atomic.h>
+#include <parlib/arch.h>
+#include <parlib/queue.h>
 #include <parlib/mcs.h>
+#include <parlib/vcore.h>
 #include "upthread.h"
 
-#define printd(...)
+#define printd(...) 
+//#define printd(...) printf(__VA_ARGS__)
 
 struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
 struct upthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
-mcs_lock_t queue_lock = MCS_LOCK_INIT;
-upthread_once_t init_once = BTHREAD_ONCE_INIT;
+struct mcs_lock queue_lock;
+upthread_once_t init_once = UPTHREAD_ONCE_INIT;
 int threads_ready = 0;
 int threads_active = 0;
+bool can_adjust_vcores = TRUE;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -34,20 +30,22 @@ static inline void spin_to_sleep(unsigned int spins, unsigned int *spun);
 /* Pthread 2LS operations */
 void pth_sched_entry(void);
 void pth_thread_runnable(struct uthread *uthread);
-void pth_thread_yield(struct uthread *uthread);
-void pth_preempt_pending(void);
+void pth_thread_paused(struct uthread *uthread);
+void pth_thread_has_blocked(struct uthread *uthread, int flags);
 void pth_spawn_thread(uintptr_t pc_start, void *data);
 
 struct schedule_ops upthread_sched_ops = {
 	pth_sched_entry,
 	pth_thread_runnable,
-	pth_thread_yield,
+	pth_thread_paused,
+	0, /* pth_preempt_pending, */
+	pth_thread_has_blocked,
 	0, /* pth_preempt_pending, */
 	0, /* pth_spawn_thread, */
 };
 
 /* Publish our sched_ops, overriding the weak defaults */
-struct schedule_ops *sched_ops __attribute__((weak)) = &upthread_sched_ops;
+struct schedule_ops *sched_ops = &upthread_sched_ops;
 
 /* Static helpers */
 static void __upthread_free_stack(struct upthread_tcb *pt);
@@ -64,25 +62,36 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	}
 	/* no one currently running, so lets get someone from the ready queue */
 	struct upthread_tcb *new_thread = NULL;
-	struct mcs_lock_qnode local_qn = {0};
-	mcs_lock_lock(&queue_lock, &local_qn);
-	new_thread = TAILQ_FIRST(&ready_queue);
-	if (new_thread) {
-		TAILQ_REMOVE(&ready_queue, new_thread, next);
-		TAILQ_INSERT_TAIL(&active_queue, new_thread, next);
-		threads_active++;
-		threads_ready--;
-	}
-	mcs_lock_unlock(&queue_lock, &local_qn);
-	/* Instead of yielding, you could spin, turn off the core, set an alarm,
-	 * whatever.  You want some logic to decide this.  Uthread code will have
-	 * helpers for this (like how we provide run_uthread()) */
-	if (!new_thread) {
-		/* TODO: consider doing something more intelligent here */
+	/* Try to get a thread.  If we get one, we'll break out and run it.  If not,
+	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
+	 * had a new event come in, one that may make us able to get a new_thread */
+	do {
+        mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
+		mcs_lock_lock(&queue_lock, &qnode);
+		new_thread = TAILQ_FIRST(&ready_queue);
+		if (new_thread) {
+			TAILQ_REMOVE(&ready_queue, new_thread, next);
+			TAILQ_INSERT_TAIL(&active_queue, new_thread, next);
+			threads_active++;
+			threads_ready--;
+			mcs_lock_unlock(&queue_lock, &qnode);
+			/* If you see what looks like the same uthread running in multiple
+			 * places, your list might be jacked up.  Turn this on. */
+			printd("[P] got uthread %08p on vc %d state %08p flags %08p\n",
+			       new_thread, vcoreid,
+			       ((struct uthread*)new_thread)->state,
+			       ((struct uthread*)new_thread)->flags);
+			break;
+		}
+		mcs_lock_unlock(&queue_lock, &qnode);
+		/* no new thread, try to yield */
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
-		vcore_yield(false);
-		assert(0);
-	}
+		/* TODO: you can imagine having something smarter here, like spin for a
+		 * bit before yielding (or not at all if you want to be greedy). */
+		if (can_adjust_vcores)
+			vcore_yield(FALSE);
+	} while (1);
+	assert(new_thread->state == UPTH_RUNNABLE);
 	run_uthread((struct uthread*)new_thread);
 	assert(0);
 }
@@ -97,55 +106,79 @@ static void __upthread_run(void)
 void pth_thread_runnable(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
-	struct mcs_lock_qnode local_qn = {0};
+	/* At this point, the 2LS can see why the thread blocked and was woken up in
+	 * the first place (coupling these things together).  On the yield path, the
+	 * 2LS was involved and was able to set the state.  Now when we get the
+	 * thread back, we can take a look. */
+	printd("upthread %08p runnable, state was %d\n", upthread, upthread->state);
+	switch (upthread->state) {
+		case (UPTH_CREATED):
+		case (UPTH_BLK_YIELDING):
+		case (UPTH_BLK_JOINING):
+		case (UPTH_BLK_SYSC):
+		case (UPTH_BLK_PAUSED):
+		case (UPTH_BLK_MUTEX):
+			/* can do whatever for each of these cases */
+			break;
+		default:
+			printf("Odd state %d for upthread %08p\n", upthread->state, upthread);
+	}
+	upthread->state = UPTH_RUNNABLE;
 	/* Insert the newly created thread into the ready queue of threads.
 	 * It will be removed from this queue later when vcore_entry() comes up */
-	mcs_lock_lock(&queue_lock, &local_qn);
+    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
+	mcs_lock_lock(&queue_lock, &qnode);
 	TAILQ_INSERT_TAIL(&ready_queue, upthread, next);
 	threads_ready++;
-	mcs_lock_unlock(&queue_lock, &local_qn);
-	vcore_request(threads_ready);
+	mcs_lock_unlock(&queue_lock, &qnode);
+	/* Smarter schedulers should look at the num_vcores() and how much work is
+	 * going on to make a decision about how many vcores to request. */
+	if (can_adjust_vcores)
+		vcore_request(threads_ready);
 }
 
-static void __upthread_destroy(struct upthread_tcb *upthread)
-{
-	/* Cleanup the underlying uthread */
-	uthread_cleanup(&upthread->uthread);
-
-	/* Cleanup, mirroring upthread_create() */
-	__upthread_free_stack(upthread);
-	/* TODO: race on detach state */
-	if (upthread->detached)
-		free(upthread);
-	else
-		upthread->finished = 1;
-}
-
-/* The calling thread is yielding.  Do what you need to do to restart (like put
- * yourself on a runqueue), or do some accounting.  Eventually, this might be a
- * little more generic than just yield. */
-void pth_thread_yield(struct uthread *uthread)
+/* For some reason not under its control, the uthread stopped running (compared
+ * to yield, which was caused by uthread/2LS code).
+ *
+ * The main case for this is if the vcore was preempted or if the vcore it was
+ * running on needed to stop.  You are given a uthread that looks like it took a
+ * notif, and had its context/silly state copied out to the uthread struct.
+ * (copyout_uthread).  Note that this will be called in the context (TLS) of the
+ * vcore that is losing the uthread.  If that vcore is running, it'll be in a
+ * preempt-event handling loop (not in your 2LS code).  If this is a big
+ * problem, I'll change it. */
+void pth_thread_paused(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
-	struct mcs_lock_qnode local_qn = {0};
-	/* Remove from the active list, whether exiting or yielding.  We're holding
-	 * the lock throughout both list modifications (if applicable). */
-	mcs_lock_lock(&queue_lock, &local_qn);
+	/* Remove from the active list.  Note that I don't particularly care about
+	 * the active list.  We keep it around because it causes bugs and keeps us
+	 * honest.  After all, some 2LS may want an active list */
+    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
+	mcs_lock_lock(&queue_lock, &qnode);
 	threads_active--;
 	TAILQ_REMOVE(&active_queue, upthread, next);
-	if (upthread->flags & PTHREAD_EXITING) {
-		mcs_lock_unlock(&queue_lock, &local_qn);
-		__upthread_destroy(upthread);
-	} else {
-		/* Put it on the ready list (tail).  Don't do this until we are done
-		 * completely with the thread, since it can be restarted somewhere else.
-		 * */
-		threads_ready++;
-		TAILQ_INSERT_TAIL(&ready_queue, upthread, next);
-		mcs_lock_unlock(&queue_lock, &local_qn);
-	}
+	mcs_lock_unlock(&queue_lock, &qnode);
+	/* communicate to pth_thread_runnable */
+	upthread->state = UPTH_BLK_PAUSED;
+	/* At this point, you could do something clever, like put it at the front of
+	 * the runqueue, see if it was holding a lock, do some accounting, or
+	 * whatever. */
+	uthread_runnable(uthread);
 }
-	
+
+void pth_thread_has_blocked(struct uthread *uthread, int flags)
+{
+	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	/* could imagine doing something with the flags.  For now, we just treat all
+	 * externally blocked reasons as 'MUTEX'.  Whatever we do here, we are
+	 * mostly communicating to our future selves in pth_thread_runnable(), which
+	 * gets called by whoever triggered this callback */
+	upthread->state = UPTH_BLK_MUTEX;
+	/* Just for yucks: */
+	if (flags == UTH_EXT_BLK_JUSTICE)
+		printf("For great justice!\n");
+}
+
 void pth_preempt_pending(void)
 {
 }
@@ -154,12 +187,22 @@ void pth_spawn_thread(uintptr_t pc_start, void *data)
 {
 }
 
+/* Akaros upthread extensions / hacks */
+
+/* Tells the upthread 2LS to not change the number of vcores.  This means it will
+ * neither request vcores nor yield vcores.  Only used for testing. */
+void upthread_can_vcore_request(bool can)
+{
+	/* checked when we would request or yield */
+	can_adjust_vcores = can;
+}
+
 /* Pthread interface stuff and helpers */
 
 int upthread_attr_init(upthread_attr_t *a)
 {
- 	a->stacksize = BTHREAD_STACK_SIZE;
-	a->detachstate = BTHREAD_CREATE_JOINABLE;
+ 	a->stacksize = UPTHREAD_STACK_SIZE;
+	a->detachstate = UPTHREAD_CREATE_JOINABLE;
   	return 0;
 }
 
@@ -170,21 +213,20 @@ int upthread_attr_destroy(upthread_attr_t *a)
 
 static void __upthread_free_stack(struct upthread_tcb *pt)
 {
-//	assert(!munmap(pt->stack, pt->stacksize));
-	free(pt->stack);
+	free(pt->stacktop - pt->stacksize);
+//	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
 }
 
 static int __upthread_allocate_stack(struct upthread_tcb *pt)
 {
 	assert(pt->stacksize);
+	void *stackbot = malloc(pt->stacksize);
 //	void* stackbot = mmap(0, pt->stacksize,
 //	                      PROT_READ|PROT_WRITE|PROT_EXEC,
-//	                      MAP_SHARED|MAP_POPULATE|MAP_ANONYMOUS, -1, 0);
-//	if (stackbot == MAP_FAILED)
-	void *stackbot = calloc(1, pt->stacksize);
-	if (stackbot == NULL)
+//	                      MAP_POPULATE|MAP_ANONYMOUS, -1, 0);
+	if (stackbot == MAP_FAILED)
 		return -1; // errno set by mmap
-	pt->stack = stackbot;
+	pt->stacktop = stackbot + pt->stacksize;
 	return 0;
 }
 
@@ -208,102 +250,205 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
 
 /* Do whatever init you want.  At some point call uthread_lib_init() and pass it
  * a uthread representing thread0 (int main()) */
-static int upthread_lib_init(void)
+int upthread_lib_init(void)
 {
-    /* Make sure this only runs once */
-    static bool initialized = false;
-    if (initialized)
-        return -1;
-    initialized = true;
+	/* Make sure this only initializes once */
+	static bool initialized = FALSE;
+	if (initialized)
+		return 0;
+	initialized = TRUE;
 
-	struct mcs_lock_qnode local_qn = {0};
+	mcs_lock_init(&queue_lock);
+	/* Create a upthread_tcb for the main thread */
 	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
 	assert(t);
 	t->id = get_next_pid();
+	t->stacksize = -1;
+	t->stacktop = (void*)0xdeadbeef;
+	t->detached = TRUE;
+	t->state = UPTH_RUNNING;
+	t->joiner = 0;
 	assert(t->id == 0);
-
-	/* Put the new upthread on the active queue */
-	mcs_lock_lock(&queue_lock, &local_qn);
+	/* Put the new upthread (thread0) on the active queue */
+	mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
+	mcs_lock_lock(&queue_lock, &qnode);	/* arguably, we don't need these (_S mode) */
 	threads_active++;
 	TAILQ_INSERT_TAIL(&active_queue, t, next);
-	mcs_lock_unlock(&queue_lock, &local_qn);
-    assert(!uthread_lib_init((struct uthread*)t));
-    return 0;
+	mcs_lock_unlock(&queue_lock, &qnode);
+
+	/* Initialize the uthread code (we're in _M mode after this).  Doing this
+	 * last so that all the event stuff is ready when we're in _M mode.  Not a
+	 * big deal one way or the other.  Note that vcore_init() hasn't happened
+	 * yet, so if a 2LS somehow wants to have its init stuff use things like
+	 * vcore stacks or TLSs, we'll need to change this. */
+	assert(!parlib_init((struct uthread*)t));
+	return 0;
 }
 
-/* Responible for creating the upthread and initializing its user trap frame */
-int upthread_create(upthread_t* thread, const upthread_attr_t* attr,
-                   void *(*start_routine)(void *), void* arg)
+int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
+                   void *(*start_routine)(void *), void *arg)
 {
-    static bool first = true;
-    if (first) {
-        assert(!upthread_lib_init());
-        first = false;
-    }
-
-	/* Create a upthread struct */
+	static bool first = TRUE;
+	if (first) {
+		assert(!upthread_lib_init());
+		first = FALSE;
+	}
+	/* Create the actual thread */
 	struct upthread_tcb *upthread;
 	upthread = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
 	assert(upthread);
-
-	/* Initialize the basics of the underlying uthread */
-	uthread_init(&upthread->uthread);
-
-	/* Initialize upthread state */
-	upthread->stacksize = BTHREAD_STACK_SIZE;	/* default */
+	upthread->stacksize = UPTHREAD_STACK_SIZE;	/* default */
+	upthread->state = UPTH_CREATED;
 	upthread->id = get_next_pid();
 	upthread->detached = FALSE;				/* default */
-	upthread->flags = 0;
-	upthread->finished = FALSE;				/* default */
+	upthread->joiner = 0;
 	/* Respect the attributes */
 	if (attr) {
 		if (attr->stacksize)					/* don't set a 0 stacksize */
 			upthread->stacksize = attr->stacksize;
-		if (attr->detachstate == BTHREAD_CREATE_DETACHED)
+		if (attr->detachstate == UPTHREAD_CREATE_DETACHED)
 			upthread->detached = TRUE;
 	}
 	/* allocate a stack */
 	if (__upthread_allocate_stack(upthread))
 		printf("We're fucked\n");
-
 	/* Set the u_tf to start up in __upthread_run, which will call the real
 	 * start_routine and pass it the arg.  Note those aren't set until later in
 	 * upthread_create(). */
-	init_uthread_tf(&upthread->uthread, __upthread_run, upthread->stack, upthread->stacksize); 
-
+	init_uthread_tf(&upthread->uthread, __upthread_run,
+	                upthread->stacktop - upthread->stacksize,
+                    upthread->stacksize);
 	upthread->start_routine = start_routine;
 	upthread->arg = arg;
+	/* Initialize the uthread */
+	uthread_init((struct uthread*)upthread);
 	uthread_runnable((struct uthread*)upthread);
 	*thread = upthread;
 	return 0;
 }
 
-int upthread_join(upthread_t thread, void** retval)
+/* Helper that all upthread-controlled yield paths call.  Just does some
+ * accounting.  This is another example of how the much-loathed (and loved)
+ * active queue is keeping us honest. */
+static void __upthread_generic_yield(struct upthread_tcb *upthread)
+{
+    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
+	mcs_lock_lock(&queue_lock, &qnode);
+	threads_active--;
+	TAILQ_REMOVE(&active_queue, upthread, next);
+	mcs_lock_unlock(&queue_lock, &qnode);
+}
+
+/* Callback/bottom half of join, called from __uthread_yield (vcore context).
+ * join_target is who we are trying to join on (and who is calling exit). */
+static void __pth_join_cb(struct uthread *uthread, void *arg)
+{
+	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	struct upthread_tcb *join_target = (struct upthread_tcb*)arg;
+	struct upthread_tcb *temp_pth = 0;
+	__upthread_generic_yield(upthread);
+	/* We're trying to join, yield til we get woken up */
+	upthread->state = UPTH_BLK_JOINING;	/* could do this front-side */
+	/* Put ourselves in the join target's joiner slot.  If we get anything back,
+	 * we lost the race and need to wake ourselves.  Syncs with __pth_exit_cb.*/
+	temp_pth = atomic_swap_ptr((void**)&join_target->joiner, upthread);
+	/* After that atomic swap, the upthread might be woken up (if it succeeded),
+	 * so don't touch upthread again after that (this following if () is okay).*/
+	if (temp_pth) {		/* temp_pth != 0 means they exited first */
+		assert(temp_pth == join_target);	/* Sanity */
+		/* wake ourselves, not the exited one! */
+		printd("[pth] %08p already exit, rewaking ourselves, joiner %08p\n",
+		       temp_pth, upthread);
+		uthread_runnable(uthread);	/* wake ourselves */
+	}
+}
+
+int upthread_join(struct upthread_tcb *join_target, void **retval)
 {
 	/* Not sure if this is the right semantics.  There is a race if we deref
-	 * thread and he is already freed (which would have happened if he was
+	 * join_target and he is already freed (which would have happened if he was
 	 * detached. */
-	if (thread->detached) {
+	if (join_target->detached) {
 		printf("[upthread] trying to join on a detached upthread");
 		return -1;
 	}
-	while (!thread->finished)
-		upthread_yield();
+	/* See if it is already done, to avoid the pain of a uthread_yield() (the
+	 * early check is an optimization, pth_thread_yield() handles the race). */
+	if (!join_target->joiner) {
+		uthread_yield(TRUE, __pth_join_cb, join_target);
+		/* When we return/restart, the thread will be done */
+	} else {
+		assert(join_target->joiner == join_target);	/* sanity check */
+	}
 	if (retval)
-		*retval = thread->retval;
-	free(thread);
+		*retval = join_target->retval;
+	free(join_target);
 	return 0;
 }
 
+/* Callback/bottom half of exit.  Syncs with __pth_join_cb.  Here's how it
+ * works: the slot for joiner is initially 0.  Joiners try to swap themselves
+ * into that spot.  Exiters try to put 'themselves' into it.  Whoever gets 0
+ * back won the race.  If the exiter lost the race, it must wake up the joiner
+ * (which was the value from temp_pth).  If the joiner lost the race, it must
+ * wake itself up, and for sanity reasons can ensure the value from temp_pth is
+ * the join target). */
+static void __pth_exit_cb(struct uthread *uthread, void *junk)
+{
+	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	struct upthread_tcb *temp_pth = 0;
+	__upthread_generic_yield(upthread);
+	/* Catch some bugs */
+	upthread->state = UPTH_EXITING;
+	/* Destroy the upthread */
+	uthread_cleanup(uthread);
+	/* Cleanup, mirroring upthread_create() */
+	__upthread_free_stack(upthread);
+	/* TODO: race on detach state (see join) */
+	if (upthread->detached) {
+		free(upthread);
+	} else {
+		/* See if someone is joining on us.  If not, we're done (and the
+		 * joiner will wake itself when it saw us there instead of 0). */
+		temp_pth = atomic_swap_ptr((void**)&upthread->joiner, upthread);
+		if (temp_pth) {
+			/* they joined before we exited, we need to wake them */
+			printd("[pth] %08p exiting, waking joiner %08p\n",
+			       upthread, temp_pth);
+			uthread_runnable((struct uthread*)temp_pth);
+		}
+	}
+}
+
+void upthread_exit(void *ret)
+{
+	struct upthread_tcb *upthread = upthread_self();
+	upthread->retval = ret;
+	uthread_yield(FALSE, __pth_exit_cb, 0);
+}
+
+/* Callback/bottom half of yield.  For those writing these pth callbacks, the
+ * minimum is call generic, set state (communicate with runnable), then do
+ * something that causes it to be runnable in the future (or right now). */
+static void __pth_yield_cb(struct uthread *uthread, void *junk)
+{
+	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	__upthread_generic_yield(upthread);
+	upthread->state = UPTH_BLK_YIELDING;
+	/* just immediately restart it */
+	uthread_runnable(uthread);
+}
+
+/* Cooperative yielding of the processor, to allow other threads to run */
 int upthread_yield(void)
 {
-	uthread_yield(true);
+	uthread_yield(TRUE, __pth_yield_cb, 0);
 	return 0;
 }
 
 int upthread_mutexattr_init(upthread_mutexattr_t* attr)
 {
-  attr->type = BTHREAD_MUTEX_DEFAULT;
+  attr->type = UPTHREAD_MUTEX_DEFAULT;
   return 0;
 }
 
@@ -320,13 +465,13 @@ int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
 
 int upthread_mutexattr_gettype(const upthread_mutexattr_t* attr, int* type)
 {
-  *type = attr ? attr->type : BTHREAD_MUTEX_DEFAULT;
+  *type = attr ? attr->type : UPTHREAD_MUTEX_DEFAULT;
   return 0;
 }
 
 int upthread_mutexattr_settype(upthread_mutexattr_t* attr, int type)
 {
-  if(type != BTHREAD_MUTEX_NORMAL)
+  if(type != UPTHREAD_MUTEX_NORMAL)
     return EINVAL;
   attr->type = type;
   return 0;
@@ -335,7 +480,7 @@ int upthread_mutexattr_settype(upthread_mutexattr_t* attr, int type)
 int upthread_mutex_init(upthread_mutex_t* m, const upthread_mutexattr_t* attr)
 {
   m->attr = attr;
-  m->lock = 0;
+  atomic_init(&m->lock, 0);
   return 0;
 }
 
@@ -355,22 +500,25 @@ int upthread_mutex_lock(upthread_mutex_t* m)
 	while(upthread_mutex_trylock(m))
 		while(*(volatile size_t*)&m->lock) {
 			cpu_relax();
-			spin_to_sleep(BTHREAD_MUTEX_SPINS, &spinner);
+			spin_to_sleep(UPTHREAD_MUTEX_SPINS, &spinner);
 		}
+	/* normally we'd need a wmb() and a wrmb() after locking, but the
+	 * atomic_swap handles the CPU mb(), so just a cmb() is necessary. */
+	cmb();
 	return 0;
 }
 
 int upthread_mutex_trylock(upthread_mutex_t* m)
 {
-  return atomic_exchange_acq(&m->lock,1) == 0 ? 0 : EBUSY;
+  return atomic_swap(&m->lock, 1) == 0 ? 0 : EBUSY;
 }
 
 int upthread_mutex_unlock(upthread_mutex_t* m)
 {
-  /* Need to prevent the compiler (and some arches) from reordering older
-   * stores */
+  /* keep reads and writes inside the protected region */
+  rwmb();
   wmb();
-  m->lock = 0;
+  atomic_set(&m->lock, 0);
   return 0;
 }
 
@@ -402,7 +550,7 @@ int upthread_cond_broadcast(upthread_cond_t *c)
 int upthread_cond_signal(upthread_cond_t *c)
 {
   int i;
-  for(i = 0; i < MAX_BTHREADS; i++)
+  for(i = 0; i < MAX_UPTHREADS; i++)
   {
     if(c->waiters[i])
     {
@@ -415,21 +563,21 @@ int upthread_cond_signal(upthread_cond_t *c)
 
 int upthread_cond_wait(upthread_cond_t *c, upthread_mutex_t *m)
 {
-  int old_waiter = c->next_waiter;
-  int my_waiter = c->next_waiter;
+  uint32_t old_waiter = c->next_waiter;
+  uint32_t my_waiter = c->next_waiter;
   
   //allocate a slot
-  while (atomic_exchange_acq(& (c->in_use[my_waiter]), SLOT_IN_USE) == SLOT_IN_USE)
+  while (atomic_swap_u32(& (c->in_use[my_waiter]), SLOT_IN_USE) == SLOT_IN_USE)
   {
-    my_waiter = (my_waiter + 1) % MAX_BTHREADS;
+    my_waiter = (my_waiter + 1) % MAX_UPTHREADS;
     assert (old_waiter != my_waiter);  // do not want to wrap around
   }
   c->waiters[my_waiter] = WAITER_WAITING;
-  c->next_waiter = (my_waiter+1) % MAX_BTHREADS;  // race on next_waiter but ok, because it is advisary
+  c->next_waiter = (my_waiter+1) % MAX_UPTHREADS;  // race on next_waiter but ok, because it is advisary
 
   upthread_mutex_unlock(m);
 
-  volatile int* poll = &c->waiters[my_waiter];
+  volatile uint32_t* poll = &c->waiters[my_waiter];
   while(*poll);
   c->in_use[my_waiter] = SLOT_FREE;
   upthread_mutex_lock(m);
@@ -439,7 +587,7 @@ int upthread_cond_wait(upthread_cond_t *c, upthread_mutex_t *m)
 
 int upthread_condattr_init(upthread_condattr_t *a)
 {
-  a = BTHREAD_PROCESS_PRIVATE;
+  a = UPTHREAD_PROCESS_PRIVATE;
   return 0;
 }
 
@@ -470,20 +618,9 @@ int upthread_equal(upthread_t t1, upthread_t t2)
   return t1 == t2;
 }
 
-/* This function cannot be migrated to a different vcore by the userspace
- * scheduler.  Will need to sort that shit out. */
-void upthread_exit(void *ret)
-{
-	struct upthread_tcb *upthread = upthread_self();
-	upthread->retval = ret;
-	/* So our pth_thread_yield knows we want to exit */
-	upthread->flags |= PTHREAD_EXITING;
-	uthread_yield(false);
-}
-
 int upthread_once(upthread_once_t* once_control, void (*init_routine)(void))
 {
-  if(atomic_exchange_acq(once_control,1) == 0)
+  if (atomic_swap_u32(once_control, 1) == 0)
     init_routine();
   return 0;
 }
@@ -509,15 +646,15 @@ int upthread_barrier_wait(upthread_barrier_t* b)
   {
     printd("Thread %d is last to hit the barrier, resetting...\n", upthread_self()->id);
     b->count = b->nprocs;
-    wmb();
+	wmb();
     b->sense = ls;
-    return BTHREAD_BARRIER_SERIAL_THREAD;
+    return UPTHREAD_BARRIER_SERIAL_THREAD;
   }
   else
   {
     while(b->sense != ls) {
       cpu_relax();
-      spin_to_sleep(BTHREAD_BARRIER_SPINS, &spinner);
+      spin_to_sleep(UPTHREAD_BARRIER_SPINS, &spinner);
     }
     return 0;
   }
@@ -531,16 +668,7 @@ int upthread_barrier_destroy(upthread_barrier_t* b)
 
 int upthread_detach(upthread_t thread)
 {
+	/* TODO: race on this state.  Someone could be trying to join now */
 	thread->detached = TRUE;
 	return 0;
 }
-
-#define upthread_rwlock_t upthread_mutex_t
-#define upthread_rwlockattr_t upthread_mutexattr_t
-#define upthread_rwlock_destroy upthread_mutex_destroy
-#define upthread_rwlock_init upthread_mutex_init
-#define upthread_rwlock_unlock upthread_mutex_unlock
-#define upthread_rwlock_rdlock upthread_mutex_lock
-#define upthread_rwlock_wrlock upthread_mutex_lock
-#define upthread_rwlock_tryrdlock upthread_mutex_trylock
-#define upthread_rwlock_trywrlock upthread_mutex_trylock
