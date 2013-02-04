@@ -2,7 +2,7 @@
 ACLOCAL_AMFLAGS=-I m4
 
 # Set up global variables
-LIBNAME = rrthread-parlib
+LIBNAME = upthread
 CAP_LIBNAME = $(shell echo $(LIBNAME) | sed -e 's/^[a-z]/\U&/g')
 SRCDIR = $(srcdir)/@SRCDIR@
 
@@ -16,18 +16,20 @@ LIB_HFILES = \
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
 
 # Setup parameters to build the library
-lib_LTLIBRARIES = librrthread-parlib.la
-librrthread_parlib_la_CFLAGS = $(AM_CFLAGS)
-librrthread_parlib_la_CFLAGS += -I$(SYSDEPDIR)
-librrthread_parlib_la_SOURCES = $(LIB_FILES)
-librrthread_parlib_la_LIBADD = -lparlib
-if STATIC_ONLY 
-librrthread_parlib_la_LDFLAGS = -all-static 
-endif 
+lib_LTLIBRARIES = libupthread.la
+libupthread_la_CFLAGS = $(AM_CFLAGS)
+libupthread_la_CFLAGS += -I$(SYSDEPDIR)
+libupthread_la_SOURCES = $(LIB_FILES)
+if STATIC_ONLY
+libupthread_la_LIBADD = $(LPARLIB) -lpthread
+libupthread_la_LDFLAGS = -all-static
+else
+libupthread_la_LIBADD = $(LPARLIB)
+endif
 
 # Setup a directory where all of the include files will be installed
-rrthread_parlibincdir = $(includedir)/parlib/rrthread
-dist_rrthread_parlibinc_DATA = $(LIB_HFILES)
+upthreadincdir = $(includedir)/upthread
+dist_upthreadinc_DATA = $(LIB_HFILES)
 
 # Setup parameters to build the test programs
 check_PROGRAMS = upthread_test
@@ -35,11 +37,12 @@ check_PROGRAMS = upthread_test
 upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
 upthread_test_CFLAGS = $(AM_CFLAGS)
 upthread_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
+if STATIC_ONLY
+upthread_test_LDADD = -lupthread $(LPARLIB) -lpthread
 upthread_test_LDFLAGS = -all-static
-upthread_test_LDADD = librrthread-parlib.la
-if STATIC_ONLY 
-upthread_test_LDADD += -lpthread
-endif 
+else
+upthread_test_LDADD = -lupthread $(LPARLIB)
+endif
 
 ChangeLog:
 	cd $(srcdir); \
@@ -48,7 +51,7 @@ ChangeLog:
 	fi;
 
 uninstall-hook:
-	rm -rf $(rrthread_parlibincdir)
+	rm -rf $(upthreadincdir)
 
 .PHONY: ChangeLog
 

@@ -281,7 +281,7 @@ int upthread_lib_init(void)
 	 * big deal one way or the other.  Note that vcore_init() hasn't happened
 	 * yet, so if a 2LS somehow wants to have its init stuff use things like
 	 * vcore stacks or TLSs, we'll need to change this. */
-	assert(!parlib_init((struct uthread*)t));
+	assert(!uthread_lib_init((struct uthread*)t));
 	return 0;
 }
 

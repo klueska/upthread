@@ -1,4 +1,4 @@
-rrthread-parlib 1.0 - README
+upthread 1.0 - README
 For questions or comments, please contact: Kevin Klues <klueska@cs.berkeley.edu>
 
 This is a simple scheduler implemented using the vcore and uthread facilities of 
