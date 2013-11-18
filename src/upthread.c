@@ -250,14 +250,8 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
 
 /* Do whatever init you want.  At some point call uthread_lib_init() and pass it
  * a uthread representing thread0 (int main()) */
-int upthread_lib_init(void)
+static void __attribute__((constructor)) upthread_lib_init(void)
 {
-	/* Make sure this only initializes once */
-	static bool initialized = FALSE;
-	if (initialized)
-		return 0;
-	initialized = TRUE;
-
 	mcs_lock_init(&queue_lock);
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
@@ -281,18 +275,12 @@ int upthread_lib_init(void)
 	 * big deal one way or the other.  Note that vcore_init() hasn't happened
 	 * yet, so if a 2LS somehow wants to have its init stuff use things like
 	 * vcore stacks or TLSs, we'll need to change this. */
-	assert(!uthread_lib_init((struct uthread*)t));
-	return 0;
+	uthread_lib_init((struct uthread*)t);
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
                    void *(*start_routine)(void *), void *arg)
 {
-	static bool first = TRUE;
-	if (first) {
-		assert(!upthread_lib_init());
-		first = FALSE;
-	}
 	/* Create the actual thread */
 	struct upthread_tcb *upthread;
 	upthread = (upthread_t)calloc(1, sizeof(struct upthread_tcb));

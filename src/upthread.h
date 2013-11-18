@@ -124,7 +124,6 @@ typedef void** upthread_key_t;
 
 /* Akaros upthread extensions / hacks */
 void upthread_can_vcore_request(bool can);	/* default is TRUE */
-int upthread_lib_init(void);
 
 /* The upthreads API */
 int upthread_attr_init(upthread_attr_t *);
