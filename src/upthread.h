@@ -1,7 +1,7 @@
 #ifndef _UUPTHREAD_H
 #define _UUPTHREAD_H
 
-#include <parlib/queue.h>
+#include <sys/queue.h>
 #include <parlib/vcore.h>
 #include <parlib/uthread.h>
 #include <parlib/mcs.h>

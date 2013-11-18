@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
+#include <sys/queue.h>
 #include <sys/mman.h>
 #include <parlib/parlib.h>
 #include <parlib/atomic.h>
 #include <parlib/arch.h>
-#include <parlib/queue.h>
 #include <parlib/mcs.h>
 #include <parlib/vcore.h>
 #include "upthread.h"
