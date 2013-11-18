@@ -213,17 +213,15 @@ int upthread_attr_destroy(upthread_attr_t *a)
 
 static void __upthread_free_stack(struct upthread_tcb *pt)
 {
-	free(pt->stacktop - pt->stacksize);
-//	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
+	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
 }
 
 static int __upthread_allocate_stack(struct upthread_tcb *pt)
 {
 	assert(pt->stacksize);
-	void *stackbot = malloc(pt->stacksize);
-//	void* stackbot = mmap(0, pt->stacksize,
-//	                      PROT_READ|PROT_WRITE|PROT_EXEC,
-//	                      MAP_POPULATE|MAP_ANONYMOUS, -1, 0);
+	void* stackbot = mmap(0, pt->stacksize,
+	                      PROT_READ|PROT_WRITE|PROT_EXEC,
+	                      MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 	if (stackbot == MAP_FAILED)
 		return -1; // errno set by mmap
 	pt->stacktop = stackbot + pt->stacksize;
