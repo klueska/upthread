@@ -5,6 +5,7 @@
 #include <parlib/vcore.h>
 #include <parlib/uthread.h>
 #include <parlib/mcs.h>
+//#include <parlib/syscall.h>
 
 #ifdef __cplusplus
   extern "C" {

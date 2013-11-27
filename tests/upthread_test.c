@@ -2,6 +2,7 @@
 #include <upthread.h> // normally installdir/headerfile
 #include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 
 /* OS dependent #incs */
 #include <parlib/parlib.h>
@@ -12,10 +13,12 @@
 
 upthread_mutex_t lock = UPTHREAD_MUTEX_INITIALIZER;
 #define printf_safe(...) {}
-//#define printf_safe(...) \
+/*
+#define printf_safe(...) \
 	upthread_mutex_lock(&lock); \
 	printf(__VA_ARGS__); \
 	upthread_mutex_unlock(&lock);
+*/
 
 #define MAX_NR_TEST_THREADS 100000
 int nr_yield_threads = 100;
@@ -70,7 +73,6 @@ int main(int argc, char** argv)
 	if (nr_vcores) {
 		/* Only do the vcore trickery if requested */
 		upthread_can_vcore_request(FALSE);	/* 2LS won't manage vcores */
-		upthread_lib_init();					/* gives us one vcore */
 		vcore_request(nr_vcores - 1);		/* ghetto incremental interface */
 		for (int i = 0; i < nr_vcores; i++) {
 			printf("Vcore %d not mapped to a particular pcore\n", i);
@@ -98,8 +100,8 @@ int main(int argc, char** argv)
 	            (end_tv.tv_usec - start_tv.tv_usec);
 	printf("Done: %d uthreads, %d loops, %d vcores, %d work\n",
 	       nr_yield_threads, nr_yield_loops, nr_vcores, amt_fake_work);
-	printf("Nr context switches: %d\n", nr_ctx_switches);
-	printf("Time to run: %d usec\n", usec_diff);
+	printf("Nr context switches: %ld\n", nr_ctx_switches);
+	printf("Time to run: %ld usec\n", usec_diff);
 	if (nr_vcores == 1)
 		printf("Context switch latency: %d nsec\n",
 		       (int)(1000LL*usec_diff / nr_ctx_switches));

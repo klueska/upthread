@@ -10,6 +10,7 @@
 #include <parlib/arch.h>
 #include <parlib/mcs.h>
 #include <parlib/vcore.h>
+#include <parlib/syscall.h>
 #include "upthread.h"
 
 #define printd(...) 
@@ -18,7 +19,6 @@
 struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
 struct upthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
 struct mcs_lock queue_lock;
-upthread_once_t init_once = UPTHREAD_ONCE_INIT;
 int threads_ready = 0;
 int threads_active = 0;
 bool can_adjust_vcores = TRUE;
@@ -27,18 +27,21 @@ bool can_adjust_vcores = TRUE;
 static int get_next_pid(void);
 static inline void spin_to_sleep(unsigned int spins, unsigned int *spun);
 
+/* Linux Specific! (handle async syscall events) */
+static void pth_blockon_syscall(struct uthread *uthread);
+static void pth_handle_syscall(struct uthread *uthread);
+
 /* Pthread 2LS operations */
 void pth_sched_entry(void);
 void pth_thread_runnable(struct uthread *uthread);
 void pth_thread_paused(struct uthread *uthread);
 void pth_thread_has_blocked(struct uthread *uthread, int flags);
-void pth_spawn_thread(uintptr_t pc_start, void *data);
 
 struct schedule_ops upthread_sched_ops = {
 	pth_sched_entry,
 	pth_thread_runnable,
 	pth_thread_paused,
-	0, /* pth_preempt_pending, */
+	0, /* pth_blockon_sysc, */
 	pth_thread_has_blocked,
 	0, /* pth_preempt_pending, */
 	0, /* pth_spawn_thread, */
@@ -121,7 +124,7 @@ void pth_thread_runnable(struct uthread *uthread)
 			/* can do whatever for each of these cases */
 			break;
 		default:
-			printf("Odd state %d for upthread %08p\n", upthread->state, upthread);
+			printf("Odd state %d for upthread %p\n", upthread->state, upthread);
 	}
 	upthread->state = UPTH_RUNNABLE;
 	/* Insert the newly created thread into the ready queue of threads.
@@ -267,6 +270,11 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	threads_active++;
 	TAILQ_INSERT_TAIL(&active_queue, t, next);
 	mcs_lock_unlock(&queue_lock, &qnode);
+
+    /* Handle syscall events. */
+    /* These functions are declared in parlib for simulating async syscalls on linux */
+    async_syscall_start = pth_blockon_syscall;
+    async_syscall_done = pth_handle_syscall;
 
 	/* Initialize the uthread code (we're in _M mode after this).  Doing this
 	 * last so that all the event stuff is ready when we're in _M mode.  Not a
@@ -658,3 +666,22 @@ int upthread_detach(upthread_t thread)
 	thread->detached = TRUE;
 	return 0;
 }
+
+static void pth_blockon_syscall(struct uthread* uthread)
+{
+    struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+    upthread->state = UPTH_BLK_SYSC;
+
+    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
+    mcs_lock_lock(&queue_lock, &qnode);
+    threads_active--;
+    TAILQ_REMOVE(&active_queue, upthread, next);
+    mcs_lock_unlock(&queue_lock, &qnode);
+}
+
+static void pth_handle_syscall(struct uthread* uthread)
+{
+    assert(((struct upthread_tcb*)uthread)->state == UPTH_BLK_SYSC);
+    pth_thread_runnable(uthread);
+}
+

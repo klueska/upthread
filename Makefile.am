@@ -32,7 +32,7 @@ upthreadincdir = $(includedir)/upthread
 dist_upthreadinc_DATA = $(LIB_HFILES)
 
 # Setup parameters to build the test programs
-check_PROGRAMS = upthread_test
+check_PROGRAMS = upthread_test syscall_test
 
 upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
 upthread_test_CFLAGS = $(AM_CFLAGS)
@@ -42,6 +42,16 @@ upthread_test_LDADD = -lupthread $(LPARLIB) -lpthread
 upthread_test_LDFLAGS = -all-static
 else
 upthread_test_LDADD = -lupthread $(LPARLIB)
+endif
+
+syscall_test_SOURCES =  @TESTSDIR@/syscall_test.c
+syscall_test_CFLAGS = $(AM_CFLAGS)
+syscall_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
+if STATIC_ONLY
+syscall_test_LDADD = -lupthread $(LPARLIB) -lpthread
+syscall_test_LDFLAGS = -all-static
+else
+syscall_test_LDADD = -lupthread $(LPARLIB)
 endif
 
 ChangeLog:
