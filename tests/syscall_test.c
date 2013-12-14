@@ -45,6 +45,8 @@ int main (int argc, char **argv)
   upthread_create(&handle, &attr, &thread_func, NULL);
   upthread_join(handle, NULL);
 
+  printf("goodbye!\n");
+
   close(fd);
 
   return 0;
