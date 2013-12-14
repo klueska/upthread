@@ -28,20 +28,20 @@ static int get_next_pid(void);
 static inline void spin_to_sleep(unsigned int spins, unsigned int *spun);
 
 /* Linux Specific! (handle async syscall events) */
-static void pth_blockon_syscall(struct uthread *uthread);
-static void pth_handle_syscall(struct uthread *uthread);
+static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type);
 
 /* Pthread 2LS operations */
-void pth_sched_entry(void);
-void pth_thread_runnable(struct uthread *uthread);
-void pth_thread_paused(struct uthread *uthread);
-void pth_thread_has_blocked(struct uthread *uthread, int flags);
+static void pth_sched_entry(void);
+static void pth_thread_runnable(struct uthread *uthread);
+static void pth_thread_paused(struct uthread *uthread);
+static void pth_blockon_syscall(struct uthread *uthread, void *sysc);
+static void pth_thread_has_blocked(struct uthread *uthread, int flags);
 
 struct schedule_ops upthread_sched_ops = {
 	pth_sched_entry,
 	pth_thread_runnable,
 	pth_thread_paused,
-	0, /* pth_blockon_sysc, */
+	pth_blockon_syscall,
 	pth_thread_has_blocked,
 	0, /* pth_preempt_pending, */
 	0, /* pth_spawn_thread, */
@@ -271,10 +271,9 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	TAILQ_INSERT_TAIL(&active_queue, t, next);
 	mcs_lock_unlock(&queue_lock, &qnode);
 
-    /* Handle syscall events. */
-    /* These functions are declared in parlib for simulating async syscalls on linux */
-    async_syscall_start = pth_blockon_syscall;
-    async_syscall_done = pth_handle_syscall;
+  /* Handle syscall events. */
+  /* These functions are declared in parlib for simulating async syscalls on linux */
+  ev_handlers[EV_SYSCALL] = pth_handle_syscall;
 
 	/* Initialize the uthread code (we're in _M mode after this).  Doing this
 	 * last so that all the event stuff is ready when we're in _M mode.  Not a
@@ -667,21 +666,52 @@ int upthread_detach(upthread_t thread)
 	return 0;
 }
 
-static void pth_blockon_syscall(struct uthread* uthread)
+static void pth_blockon_syscall(struct uthread* uthread, void *sysc)
 {
-    struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
-    upthread->state = UPTH_BLK_SYSC;
+  struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+  upthread->state = UPTH_BLK_SYSC;
 
-    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-    mcs_lock_lock(&queue_lock, &qnode);
-    threads_active--;
-    TAILQ_REMOVE(&active_queue, upthread, next);
-    mcs_lock_unlock(&queue_lock, &qnode);
+  mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
+  mcs_lock_lock(&queue_lock, &qnode);
+  threads_active--;
+  TAILQ_REMOVE(&active_queue, upthread, next);
+  mcs_lock_unlock(&queue_lock, &qnode);
+  /* Set things up so we can wake this thread up later */
+  ((struct syscall*)sysc)->u_data = uthread;
 }
 
-static void pth_handle_syscall(struct uthread* uthread)
+/* Restarts a uthread hanging off a syscall.  For the simple pthread case, we
+ * just make it runnable and let the main scheduler code handle it. */
+static void restart_thread(struct syscall *sysc)
 {
-    assert(((struct upthread_tcb*)uthread)->state == UPTH_BLK_SYSC);
-    pth_thread_runnable(uthread);
+  struct uthread *ut_restartee = (struct uthread*)sysc->u_data;
+  /* uthread stuff here: */
+  assert(ut_restartee);
+  assert(((struct upthread_tcb*)ut_restartee)->state == UPTH_BLK_SYSC);
+  assert(ut_restartee->sysc == sysc); /* set in uthread.c */
+  ut_restartee->sysc = 0; /* so we don't 'reblock' on this later */
+  pth_thread_runnable(ut_restartee);
+}
+
+/* This handler is usually run in vcore context, though I can imagine it being
+ * called by a uthread in some other threading library. */
+static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type)
+{
+  struct syscall *sysc;
+  assert(in_vcore_context());
+  /* if we just got a bit (not a msg), it should be because the process is
+   * still an SCP and hasn't started using the MCP ev_q yet (using the simple
+   * ev_q and glibc's blockon) or because the bit is still set from an old
+   * ev_q (blocking syscalls from before we could enter vcore ctx).  Either
+   * way, just return.  Note that if you screwed up the pth ev_q and made it
+   * NO_MSG, you'll never notice (we used to assert(ev_msg)). */
+  if (!ev_msg)
+    return;
+  /* It's a bug if we don't have a msg (we're handling a syscall bit-event) */
+  assert(ev_msg);
+  /* Get the sysc from the message and just restart it */
+  sysc = ev_msg->ev_arg3;
+  assert(sysc);
+  restart_thread(sysc);
 }
 
