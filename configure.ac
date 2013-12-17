@@ -3,7 +3,7 @@ AC_PREREQ([2.65])
 
 # Initialize autoconf
 # Specify package's name, version number, and bug-report address.
-AC_INIT([upthread], [1.0], [klueska@cs.berkeley.edu])
+AC_INIT([upthread-juggle], [1.0], [klueska@cs.berkeley.edu])
 
 # Directory containing any external m4 macros
 AC_CONFIG_MACRO_DIR([m4])
@@ -104,7 +104,7 @@ save_LIBS="$LIBS"
 LDFLAGS="$LDFLAGS -static -lpthread"
 LIBS="$LIBS -lpthread"
 AC_CHECK_LIB(parlib, uthread_init, [], [
-    echo "Error! You need to have parlib installed on your system in order to build lithe!"
+    echo "Error! You need to have parlib installed on your system in order to build juggle!"
     echo "Try setting --with-parlib=<parlib_install_dir>"
     echo "See 'configure --help' for details."
     exit -1

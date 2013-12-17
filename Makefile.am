@@ -2,7 +2,7 @@
 ACLOCAL_AMFLAGS=-I m4
 
 # Set up global variables
-LIBNAME = upthread
+LIBNAME = upthread-juggle
 CAP_LIBNAME = $(shell echo $(LIBNAME) | sed -e 's/^[a-z]/\U&/g')
 SRCDIR = $(srcdir)/@SRCDIR@
 
@@ -16,23 +16,23 @@ LIB_HFILES = \
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
 
 # Setup parameters to build the library
-lib_LTLIBRARIES = libupthread.la
-libupthread_la_CFLAGS = $(AM_CFLAGS)
-libupthread_la_CFLAGS += -I$(SYSDEPDIR)
-libupthread_la_SOURCES = $(LIB_FILES)
+lib_LTLIBRARIES = libupthread-juggle.la
+libupthread_juggle_la_CFLAGS = $(AM_CFLAGS)
+libupthread_juggle_la_CFLAGS += -I$(SYSDEPDIR)
+libupthread_juggle_la_SOURCES = $(LIB_FILES)
 if STATIC_ONLY
-libupthread_la_LIBADD = $(LPARLIB) -lpthread
-libupthread_la_LDFLAGS = -all-static
+libupthread_juggle_la_LIBADD = $(LPARLIB) -lpthread
+libupthread_juggle_la_LDFLAGS = -all-static
 else
-libupthread_la_LIBADD = $(LPARLIB)
+libupthread_juggle_la_LIBADD = $(LPARLIB)
 endif
 
 # Setup a directory where all of the include files will be installed
-upthreadincdir = $(includedir)/upthread
+upthreadincdir = $(includedir)/upthread-juggle
 dist_upthreadinc_DATA = $(LIB_HFILES)
 
 # Setup parameters to build the test programs
-check_PROGRAMS = upthread_test syscall_test
+check_PROGRAMS = upthread_test
 
 upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
 upthread_test_CFLAGS = $(AM_CFLAGS)
@@ -41,17 +41,7 @@ if STATIC_ONLY
 upthread_test_LDADD = -lupthread $(LPARLIB) -lpthread
 upthread_test_LDFLAGS = -all-static
 else
-upthread_test_LDADD = -lupthread $(LPARLIB)
-endif
-
-syscall_test_SOURCES =  @TESTSDIR@/syscall_test.c
-syscall_test_CFLAGS = $(AM_CFLAGS)
-syscall_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
-if STATIC_ONLY
-syscall_test_LDADD = -lupthread $(LPARLIB) -lpthread
-syscall_test_LDFLAGS = -all-static
-else
-syscall_test_LDADD = -lupthread $(LPARLIB)
+upthread_test_LDADD = -lupthread-juggle $(LPARLIB)
 endif
 
 ChangeLog:
