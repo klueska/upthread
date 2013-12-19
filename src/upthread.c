@@ -9,9 +9,13 @@
 #include <parlib/atomic.h>
 #include <parlib/arch.h>
 #include <parlib/mcs.h>
+#include <parlib/dtls.h>
 #include <parlib/vcore.h>
 #include <parlib/syscall.h>
+#include <parlib/alarm.h>
 #include "upthread.h"
+
+#define PREEMPT_PERIOD 1000000 // in microseconds
 
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
@@ -54,15 +58,59 @@ struct schedule_ops *sched_ops = &upthread_sched_ops;
 static void __upthread_free_stack(struct upthread_tcb *pt);
 static int __upthread_allocate_stack(struct upthread_tcb *pt);
 
+/* Variables, types, and callbacks for the preemptive scheduler alarm */
+void alarm_callback(struct alarm_waiter* awaiter);
+static dtls_key_t alarm_dtls_key;
+struct alarm_data {
+	struct alarm_waiter awaiter;
+	int vcoreid;
+	bool armed;
+};
+
+void init_adata(struct alarm_data *adata) {
+	init_awaiter(&adata->awaiter, alarm_callback);
+	adata->awaiter.data = adata;
+	adata->armed = false;
+	adata->vcoreid = vcore_id();
+}
+void alarm_callback(struct alarm_waiter* awaiter) {
+	struct alarm_data *adata = (struct alarm_data*)awaiter->data;
+	long pcore = __vcore_map[adata->vcoreid];
+	adata->armed = false;
+	if (pcore != VCORE_UNMAPPED)
+		vcore_signal(adata->vcoreid);
+
+}
+
 /* Called from vcore entry.  Options usually include restarting whoever was
  * running there before or running a new thread.  Events are handled out of
  * event.c (table of function pointers, stuff like that). */
 void __attribute__((noreturn)) pth_sched_entry(void)
 {
+	/* If we don't yet have the alarm dtls set up for this vcore, go ahead and
+	 * set it up */
+	struct alarm_data *adata = (struct alarm_data*)get_dtls(alarm_dtls_key);
+	if (adata == NULL) {
+		adata = malloc(sizeof(struct alarm_data));
+		assert(adata);
+		init_adata(adata);
+		set_dtls(alarm_dtls_key, adata);
+	}
+
+	/* If we don't have an alarm started for this vcore, go ahead and start one */
+	if (!adata->armed) {
+		adata->armed = true;
+		set_awaiter_rel(&adata->awaiter, PREEMPT_PERIOD);
+		set_alarm(&adata->awaiter);
+	}
+	
+	/* If there is a currently running thread (i.e. restarted without explicit
+     * yield) just restart the thread */
 	if (current_uthread) {
 		run_current_uthread();
 		assert(0);
 	}
+
 	/* no one currently running, so lets get someone from the ready queue */
 	struct upthread_tcb *new_thread = NULL;
 	/* Try to get a thread.  If we get one, we'll break out and run it.  If not,
@@ -78,12 +126,6 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 			threads_active++;
 			threads_ready--;
 			mcs_lock_unlock(&queue_lock, &qnode);
-			/* If you see what looks like the same uthread running in multiple
-			 * places, your list might be jacked up.  Turn this on. */
-			printd("[P] got uthread %08p on vc %d state %08p flags %08p\n",
-			       new_thread, vcoreid,
-			       ((struct uthread*)new_thread)->state,
-			       ((struct uthread*)new_thread)->flags);
 			break;
 		}
 		mcs_lock_unlock(&queue_lock, &qnode);
@@ -253,6 +295,10 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
  * a uthread representing thread0 (int main()) */
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
+	/* Set up the dtls key for use by each vcore for the alarm data used by
+ 	 * this scheduler */
+	alarm_dtls_key = dtls_key_create(free);
+
 	mcs_lock_init(&queue_lock);
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));

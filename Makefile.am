@@ -32,16 +32,16 @@ upthreadincdir = $(includedir)/upthread-juggle
 dist_upthreadinc_DATA = $(LIB_HFILES)
 
 # Setup parameters to build the test programs
-check_PROGRAMS = upthread_test
+check_PROGRAMS = preempt_test
 
-upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
-upthread_test_CFLAGS = $(AM_CFLAGS)
-upthread_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
+preempt_test_SOURCES =  @TESTSDIR@/preempt_test.c
+preempt_test_CFLAGS = $(AM_CFLAGS)
+preempt_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
 if STATIC_ONLY
-upthread_test_LDADD = -lupthread $(LPARLIB) -lpthread
-upthread_test_LDFLAGS = -all-static
+preempt_test_LDADD = -lupthread-juggle $(LPARLIB) -lpthread
+preempt_test_LDFLAGS = -all-static
 else
-upthread_test_LDADD = -lupthread-juggle $(LPARLIB)
+preempt_test_LDADD = -lupthread-juggle $(LPARLIB)
 endif
 
 ChangeLog:
