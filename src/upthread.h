@@ -184,7 +184,8 @@ int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize);
 int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize);
 
 //added for go compile
-int upthread_kill (upthread_t __threadid, int __signo);
+int upthread_kill(upthread_t __threadid, int __signo);
+int upthread_sigmask(int how, const sigset_t *set, sigset_t *oset);
 
 #ifdef __cplusplus
   }
