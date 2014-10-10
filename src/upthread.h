@@ -128,6 +128,8 @@ void upthread_can_vcore_request(bool can);	/* default is TRUE */
 
 /* Juggle extensions */
 int upthread_set_sched_period(uint64_t us);
+void upthread_disable_interrupts();
+void upthread_enable_interrupts();
 
 /* The upthreads API */
 int upthread_attr_init(upthread_attr_t *);

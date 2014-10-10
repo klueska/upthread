@@ -77,16 +77,25 @@ static void init_adata(struct alarm_data *adata) {
 
 static void alarm_callback(struct alarm_waiter* awaiter) {
 	struct alarm_data *adata = (struct alarm_data*)awaiter->data;
-	long pcore = __vcore_map[adata->vcoreid];
 	adata->armed = false;
-	if (pcore != VCORE_UNMAPPED)
-		vcore_signal(adata->vcoreid);
+	vcore_signal(adata->vcoreid);
+}
 
 int upthread_set_sched_period(uint64_t us)
 {
 	// TODO: signal all the cores so they get updated with the same freq
 	__preempt_period = us;
 	return 0;
+}
+
+void upthread_disable_interrupts()
+{
+	uthread_disable_interrupts();
+}
+
+void upthread_enable_interrupts()
+{
+	uthread_enable_interrupts();
 }
 
 /* Called from vcore entry.  Options usually include restarting whoever was
@@ -152,6 +161,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 static void __upthread_run(void)
 {
 	struct upthread_tcb *me = upthread_self();
+	uthread_enable_interrupts();
 	upthread_exit(me->start_routine(me->arg));
 }
 
@@ -334,42 +344,48 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	 * yet, so if a 2LS somehow wants to have its init stuff use things like
 	 * vcore stacks or TLSs, we'll need to change this. */
 	uthread_lib_init((struct uthread*)t);
+	/* Now that we've returned from the init call, we are on vcore 0 and are
+	 * running, so let's enable interrupts */
+	t->state = UPTH_RUNNING;
+	uthread_enable_interrupts();
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
                    void *(*start_routine)(void *), void *arg)
 {
-	/* Create the actual thread */
-	struct upthread_tcb *upthread;
-	upthread = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
-	assert(upthread);
-	upthread->stacksize = UPTHREAD_STACK_SIZE;	/* default */
-	upthread->state = UPTH_CREATED;
-	upthread->id = get_next_pid();
-	upthread->detached = FALSE;				/* default */
-	upthread->joiner = 0;
-	/* Respect the attributes */
-	if (attr) {
-		if (attr->stacksize)					/* don't set a 0 stacksize */
-			upthread->stacksize = attr->stacksize;
-		if (attr->detachstate == UPTHREAD_CREATE_DETACHED)
-			upthread->detached = TRUE;
-	}
-	/* allocate a stack */
-	if (__upthread_allocate_stack(upthread))
-		printf("We're fucked\n");
-	/* Set the u_tf to start up in __upthread_run, which will call the real
-	 * start_routine and pass it the arg.  Note those aren't set until later in
-	 * upthread_create(). */
-	init_uthread_tf(&upthread->uthread, __upthread_run,
-	                upthread->stacktop - upthread->stacksize,
-                    upthread->stacksize);
-	upthread->start_routine = start_routine;
-	upthread->arg = arg;
-	/* Initialize the uthread */
-	uthread_init((struct uthread*)upthread);
-	uthread_runnable((struct uthread*)upthread);
-	*thread = upthread;
+	uthread_interrupt_safe(
+		/* Create the actual thread */
+		struct upthread_tcb *upthread;
+		upthread = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
+		assert(upthread);
+		upthread->stacksize = UPTHREAD_STACK_SIZE;	/* default */
+		upthread->state = UPTH_CREATED;
+		upthread->id = get_next_pid();
+		upthread->detached = FALSE;				/* default */
+		upthread->joiner = 0;
+		/* Respect the attributes */
+		if (attr) {
+			if (attr->stacksize)					/* don't set a 0 stacksize */
+				upthread->stacksize = attr->stacksize;
+			if (attr->detachstate == UPTHREAD_CREATE_DETACHED)
+				upthread->detached = TRUE;
+		}
+		/* allocate a stack */
+		if (__upthread_allocate_stack(upthread))
+			printf("We're fucked\n");
+		/* Set the u_tf to start up in __upthread_run, which will call the real
+		 * start_routine and pass it the arg.  Note those aren't set until later in
+		 * upthread_create(). */
+		init_uthread_tf(&upthread->uthread, __upthread_run,
+		                upthread->stacktop - upthread->stacksize,
+		                upthread->stacksize);
+		upthread->start_routine = start_routine;
+		upthread->arg = arg;
+		/* Initialize the uthread */
+		uthread_init((struct uthread*)upthread);
+		uthread_runnable((struct uthread*)upthread);
+		*thread = upthread;
+	)
 	return 0;
 }
 
@@ -411,24 +427,26 @@ static void __pth_join_cb(struct uthread *uthread, void *arg)
 
 int upthread_join(struct upthread_tcb *join_target, void **retval)
 {
-	/* Not sure if this is the right semantics.  There is a race if we deref
-	 * join_target and he is already freed (which would have happened if he was
-	 * detached. */
-	if (join_target->detached) {
-		printf("[upthread] trying to join on a detached upthread");
-		return -1;
-	}
-	/* See if it is already done, to avoid the pain of a uthread_yield() (the
-	 * early check is an optimization, pth_thread_yield() handles the race). */
-	if (!join_target->joiner) {
-		uthread_yield(TRUE, __pth_join_cb, join_target);
-		/* When we return/restart, the thread will be done */
-	} else {
-		assert(join_target->joiner == join_target);	/* sanity check */
-	}
-	if (retval)
-		*retval = join_target->retval;
-	free(join_target);
+	uthread_interrupt_safe(
+		/* Not sure if this is the right semantics.  There is a race if we deref
+		 * join_target and he is already freed (which would have happened if he was
+		 * detached. */
+		if (join_target->detached) {
+			printf("[upthread] trying to join on a detached upthread");
+			return -1;
+		}
+		/* See if it is already done, to avoid the pain of a uthread_yield() (the
+		 * early check is an optimization, pth_thread_yield() handles the race). */
+		if (!join_target->joiner) {
+			uthread_yield(TRUE, __pth_join_cb, join_target);
+			/* When we return/restart, the thread will be done */
+		} else {
+			assert(join_target->joiner == join_target);	/* sanity check */
+		}
+		if (retval)
+			*retval = join_target->retval;
+		free(join_target);
+	)
 	return 0;
 }
 
@@ -468,9 +486,11 @@ static void __pth_exit_cb(struct uthread *uthread, void *junk)
 
 void upthread_exit(void *ret)
 {
-	struct upthread_tcb *upthread = upthread_self();
-	upthread->retval = ret;
-	uthread_yield(FALSE, __pth_exit_cb, 0);
+	uthread_interrupt_safe(
+		struct upthread_tcb *upthread = upthread_self();
+		upthread->retval = ret;
+		uthread_yield(FALSE, __pth_exit_cb, 0);
+	)
 }
 
 /* Callback/bottom half of yield.  For those writing these pth callbacks, the
@@ -488,7 +508,9 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 /* Cooperative yielding of the processor, to allow other threads to run */
 int upthread_yield(void)
 {
-	uthread_yield(TRUE, __pth_yield_cb, 0);
+	uthread_interrupt_safe(
+		uthread_yield(TRUE, __pth_yield_cb, 0);
+	)
 	return 0;
 }
 
@@ -534,10 +556,12 @@ int upthread_mutex_init(upthread_mutex_t* m, const upthread_mutexattr_t* attr)
  * calls.  Use this for adaptive mutexes and such. */
 static inline void spin_to_sleep(unsigned int spins, unsigned int *spun)
 {
-	if ((*spun)++ == spins) {
-		upthread_yield();
-		*spun = 0;
-	}
+	uthread_interrupt_safe(
+		if ((*spun)++ == spins) {
+			upthread_yield();
+			*spun = 0;
+		}
+	)
 }
 
 int upthread_mutex_lock(upthread_mutex_t* m)
