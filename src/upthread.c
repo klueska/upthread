@@ -15,7 +15,7 @@
 #include <parlib/alarm.h>
 #include "upthread.h"
 
-#define PREEMPT_PERIOD 1000000 // in microseconds
+#define DEFAULT_PREEMPT_PERIOD 10000 // in microseconds
 
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
@@ -26,6 +26,7 @@ static struct mcs_lock queue_lock;
 static int threads_ready = 0;
 static int threads_active = 0;
 static bool can_adjust_vcores = TRUE;
+static uint64_t __preempt_period = DEFAULT_PREEMPT_PERIOD;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -81,6 +82,11 @@ static void alarm_callback(struct alarm_waiter* awaiter) {
 	if (pcore != VCORE_UNMAPPED)
 		vcore_signal(adata->vcoreid);
 
+int upthread_set_sched_period(uint64_t us)
+{
+	// TODO: signal all the cores so they get updated with the same freq
+	__preempt_period = us;
+	return 0;
 }
 
 /* Called from vcore entry.  Options usually include restarting whoever was
@@ -101,7 +107,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	/* If we don't have an alarm started for this vcore, go ahead and start one */
 	if (!adata->armed) {
 		adata->armed = true;
-		set_awaiter_rel(&adata->awaiter, PREEMPT_PERIOD);
+		set_awaiter_rel(&adata->awaiter, __preempt_period);
 		set_alarm(&adata->awaiter);
 	}
 	
