@@ -51,6 +51,7 @@ AC_CONFIG_SRCDIR([src/upthread.c])
 
 # Set the common AM_CFLAGS for all Makefile.am files
 MY_CFLAGS="                \
+  -std=gnu99               \
   -g -O2 -Wall             \
   -Wno-unused-function     \
   -Wno-unused-value        \
@@ -60,7 +61,7 @@ MY_CFLAGS="                \
 "
 
 # Set the common AM_CFLAGS for all Makefile.am files
-AC_SUBST([AM_CFLAGS],["-std=gnu99 $MY_CFLAGS"])
+AC_SUBST([AM_CFLAGS],["$MY_CFLAGS"])
 
 # Set up some global variables for use in the makefile
 SRCDIR=src
@@ -70,18 +71,6 @@ AC_SUBST([TESTSDIR])
 AC_SUBST([LPARLIB])
 AM_SUBST_NOTMAKE([SRCDIR])
 AM_SUBST_NOTMAKE([TESTSDIR])
-
-# Check if we have gcc > 4.4
-AC_PREPROC_IFELSE(
-[
-#include <features.h>
-#if !__GNUC_PREREQ(4,4)
-  #error "Looks like I'm going to be building just static libs :("
-#endif
-],
-[STATIC_ONLY=false],
-[STATIC_ONLY=true])
-AM_CONDITIONAL([STATIC_ONLY], [test x$STATIC_ONLY = xtrue])
 
 # Add parlib -L and -I directories into LDFLAGS and C/CXXFLAGS respectively,
 # if they are not install on the system already
@@ -104,7 +93,7 @@ save_LIBS="$LIBS"
 LDFLAGS="$LDFLAGS -static -lpthread"
 LIBS="$LIBS -lpthread"
 AC_CHECK_LIB(parlib, uthread_init, [], [
-    echo "Error! You need to have parlib installed on your system in order to build juggle!"
+    echo "Error! You need to have parlib installed on your system in order to build upthread-juggle!"
     echo "Try setting --with-parlib=<parlib_install_dir>"
     echo "See 'configure --help' for details."
     exit -1
