@@ -258,8 +258,12 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
 	assert(t);
 	t->id = get_next_pid();
-	t->stacksize = -1;
-	t->stacktop = (void*)0xdeadbeef;
+	/* Fill in the main context stack info. */
+	void *stackbottom;
+	size_t stacksize;
+	parlib_get_main_stack(&stackbottom, &stacksize);
+	t->stacktop = stackbottom + stacksize;
+	t->stacksize = stacksize;
 	t->detached = TRUE;
 	t->state = UPTH_RUNNING;
 	t->joiner = 0;
