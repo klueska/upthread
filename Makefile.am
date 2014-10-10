@@ -20,12 +20,7 @@ lib_LTLIBRARIES = libupthread.la
 libupthread_la_CFLAGS = $(AM_CFLAGS)
 libupthread_la_CFLAGS += -I$(SYSDEPDIR)
 libupthread_la_SOURCES = $(LIB_FILES)
-if STATIC_ONLY
-libupthread_la_LIBADD = $(LPARLIB) -lpthread
-libupthread_la_LDFLAGS = -all-static
-else
 libupthread_la_LIBADD = $(LPARLIB)
-endif
 
 # Setup a directory where all of the include files will be installed
 upthreadincdir = $(includedir)/upthread
@@ -37,22 +32,12 @@ check_PROGRAMS = upthread_test syscall_test
 upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
 upthread_test_CFLAGS = $(AM_CFLAGS)
 upthread_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
-if STATIC_ONLY
-upthread_test_LDADD = -lupthread $(LPARLIB) -lpthread
-upthread_test_LDFLAGS = -all-static
-else
 upthread_test_LDADD = -lupthread $(LPARLIB)
-endif
 
 syscall_test_SOURCES =  @TESTSDIR@/syscall_test.c
 syscall_test_CFLAGS = $(AM_CFLAGS)
 syscall_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
-if STATIC_ONLY
-syscall_test_LDADD = -lupthread $(LPARLIB) -lpthread
-syscall_test_LDFLAGS = -all-static
-else
 syscall_test_LDADD = -lupthread $(LPARLIB)
-endif
 
 ChangeLog:
 	cd $(srcdir); \
