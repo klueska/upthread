@@ -20,12 +20,12 @@
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
 
-struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
-struct upthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
-struct mcs_lock queue_lock;
-int threads_ready = 0;
-int threads_active = 0;
-bool can_adjust_vcores = TRUE;
+static struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
+static struct upthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
+static struct mcs_lock queue_lock;
+static int threads_ready = 0;
+static int threads_active = 0;
+static bool can_adjust_vcores = TRUE;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -59,7 +59,7 @@ static void __upthread_free_stack(struct upthread_tcb *pt);
 static int __upthread_allocate_stack(struct upthread_tcb *pt);
 
 /* Variables, types, and callbacks for the preemptive scheduler alarm */
-void alarm_callback(struct alarm_waiter* awaiter);
+static void alarm_callback(struct alarm_waiter* awaiter);
 static dtls_key_t alarm_dtls_key;
 struct alarm_data {
 	struct alarm_waiter awaiter;
@@ -67,13 +67,14 @@ struct alarm_data {
 	bool armed;
 };
 
-void init_adata(struct alarm_data *adata) {
+static void init_adata(struct alarm_data *adata) {
 	init_awaiter(&adata->awaiter, alarm_callback);
 	adata->awaiter.data = adata;
 	adata->armed = false;
 	adata->vcoreid = vcore_id();
 }
-void alarm_callback(struct alarm_waiter* awaiter) {
+
+static void alarm_callback(struct alarm_waiter* awaiter) {
 	struct alarm_data *adata = (struct alarm_data*)awaiter->data;
 	long pcore = __vcore_map[adata->vcoreid];
 	adata->armed = false;
