@@ -719,3 +719,14 @@ static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type)
   restart_thread(sysc);
 }
 
+int upthread_kill(upthread_t __threadid, int __signo)
+{
+	printf("Not yet supported on parlib!\n");
+	return -1;
+}
+
+int upthread_sigmask(int how, const sigset_t *set, sigset_t *oset)
+{
+	printf("Not yet supported on parlib!\n");
+	return -1;
+}
