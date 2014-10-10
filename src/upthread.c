@@ -275,9 +275,9 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	TAILQ_INSERT_TAIL(&active_queue, t, next);
 	mcs_lock_unlock(&queue_lock, &qnode);
 
-  /* Handle syscall events. */
-  /* These functions are declared in parlib for simulating async syscalls on linux */
-  ev_handlers[EV_SYSCALL] = pth_handle_syscall;
+	/* Handle syscall events. */
+	/* These functions are declared in parlib for simulating async syscalls on linux */
+	ev_handlers[EV_SYSCALL] = pth_handle_syscall;
 
 	/* Initialize the uthread code (we're in _M mode after this).  Doing this
 	 * last so that all the event stuff is ready when we're in _M mode.  Not a

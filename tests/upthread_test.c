@@ -12,12 +12,10 @@
 #define udelay(usec) usleep(usec)
 
 upthread_mutex_t lock = UPTHREAD_MUTEX_INITIALIZER;
-#define printf_safe(...) {}
+#define printd(...) {}
 /*
-#define printf_safe(...) \
-	upthread_mutex_lock(&lock); \
+#define printd(...) \
 	printf(__VA_ARGS__); \
-	upthread_mutex_unlock(&lock);
 */
 
 #define MAX_NR_TEST_THREADS 100000
@@ -37,14 +35,14 @@ void *yield_thread(void* arg)
 	while (!ready)
 		cpu_relax();
 	for (int i = 0; i < nr_yield_loops; i++) {
-		printf_safe("[A] upthread %d %p on vcore %d, itr: %d\n", upthread_self()->id,
+		printd("[A] upthread %d %p on vcore %d, itr: %d\n", upthread_self()->id,
 		       upthread_self(), vcore_id(), i);
 		/* Fakes some work by spinning a bit.  Amount varies per uth/vcore,
 		 * scaled by fake_work */
 		if (amt_fake_work)
 			udelay(amt_fake_work * (upthread_self()->id * (vcore_id() + 1)));
 		upthread_yield();
-		printf_safe("[A] upthread %p returned from yield on vcore %d, itr: %d\n",
+		printd("[A] upthread %p returned from yield on vcore %d, itr: %d\n",
 		            upthread_self(), vcore_id(), i);
 	}
 	return (void*)(upthread_self());
@@ -81,16 +79,16 @@ int main(int argc, char** argv)
 
 	/* create and join on yield */
 	for (int i = 0; i < nr_yield_threads; i++) {
-		printf_safe("[A] About to create thread %d\n", i);
+		printd("[A] About to create thread %d\n", i);
 		assert(!upthread_create(&my_threads[i], NULL, &yield_thread, NULL));
 	}
 	if (gettimeofday(&start_tv, 0))
 		perror("Start time error...");
 	ready = TRUE;			/* signal to any spinning uthreads to start */
 	for (int i = 0; i < nr_yield_threads; i++) {
-		printf_safe("[A] About to join on thread %d(%p)\n", i, my_threads[i]);
+		printd("[A] About to join on thread %d(%p)\n", i, my_threads[i]);
 		upthread_join(my_threads[i], &my_retvals[i]);
-		printf_safe("[A] Successfully joined on thread %d (retval: %p)\n", i,
+		printd("[A] Successfully joined on thread %d (retval: %p)\n", i,
 		            my_retvals[i]);
 	}
 	if (gettimeofday(&end_tv, 0))
