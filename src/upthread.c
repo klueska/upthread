@@ -197,7 +197,7 @@ void pth_thread_runnable(struct uthread *uthread)
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
 	if (can_adjust_vcores)
-		vcore_request(threads_ready);
+		vcore_request(1);
 }
 
 /* For some reason not under its control, the uthread stopped running (compared
