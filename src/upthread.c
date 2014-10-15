@@ -28,6 +28,7 @@ static int threads_ready = 0;
 static int threads_active = 0;
 static bool can_adjust_vcores = TRUE;
 static uint64_t __preempt_period = DEFAULT_PREEMPT_PERIOD;
+static __thread uint64_t last_preempt_period = DEFAULT_PREEMPT_PERIOD;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -78,14 +79,21 @@ static void init_adata(struct alarm_data *adata) {
 
 static void alarm_callback(struct alarm_waiter* awaiter) {
 	struct alarm_data *adata = (struct alarm_data*)awaiter->data;
-	adata->armed = false;
-	vcore_signal(adata->vcoreid);
+	spinlock_lock(&awaiter->lock);
+		if (adata->armed) {
+			adata->armed = false;
+			vcore_signal(adata->vcoreid);
+		} else {
+			free(adata);
+		}
+	spinlock_unlock(&awaiter->lock);
 }
 
 int upthread_set_sched_period(uint64_t us)
 {
 	// TODO: signal all the cores so they get updated with the same freq
 	__preempt_period = us;
+	upthread_yield();
 	return 0;
 }
 
@@ -99,6 +107,15 @@ void upthread_enable_interrupts()
 	uthread_enable_interrupts();
 }
 
+static struct alarm_data *__new_alarm_data()
+{
+	struct alarm_data *adata = malloc(sizeof(struct alarm_data));
+	assert(adata);
+	init_adata(adata);
+	set_dtls(alarm_dtls_key, adata);
+	return adata;
+}
+
 /* Called from vcore entry.  Options usually include restarting whoever was
  * running there before or running a new thread.  Events are handled out of
  * event.c (table of function pointers, stuff like that). */
@@ -108,14 +125,24 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	 * set it up */
 	struct alarm_data *adata = (struct alarm_data*)get_dtls(alarm_dtls_key);
 	if (adata == NULL) {
-		adata = malloc(sizeof(struct alarm_data));
-		assert(adata);
-		init_adata(adata);
-		set_dtls(alarm_dtls_key, adata);
+		adata = __new_alarm_data();
+	} else {
+		/* If we already have an alarm set for this vcore, but the preempt
+		 * period is different than the last time it was set, then cancel the
+		 * pending alarm, so we can reset it to the new one, below. */
+		spinlock_lock(&adata->awaiter.lock);
+		if (adata->armed && (last_preempt_period != __preempt_period)) {
+			adata->armed = false;
+			spinlock_unlock(&adata->awaiter.lock);
+			adata = __new_alarm_data();
+		} else {
+			spinlock_unlock(&adata->awaiter.lock);
+		}
 	}
 
 	/* If we don't have an alarm started for this vcore, go ahead and start one */
 	if (!adata->armed) {
+		last_preempt_period = __preempt_period;
 		adata->armed = true;
 		set_awaiter_rel(&adata->awaiter, __preempt_period);
 		set_alarm(&adata->awaiter);
@@ -150,8 +177,13 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
 		/* TODO: you can imagine having something smarter here, like spin for a
 		 * bit before yielding (or not at all if you want to be greedy). */
-		if (can_adjust_vcores)
+		if (can_adjust_vcores) {
+			spinlock_lock(&adata->awaiter.lock);
+				adata->armed = false;
+				__new_alarm_data();
+			spinlock_unlock(&adata->awaiter.lock);
 			vcore_yield(FALSE);
+		}
 	} while (1);
 	assert(new_thread->state == UPTH_RUNNABLE);
 	run_uthread((struct uthread*)new_thread);
