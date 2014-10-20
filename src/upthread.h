@@ -37,6 +37,7 @@ struct upthread_tcb {
 	void *(*start_routine)(void*);
 	void *arg;
 	void *retval;
+	int last_vcore;
 };
 typedef struct upthread_tcb* upthread_t;
 TAILQ_HEAD(upthread_queue, upthread_tcb);

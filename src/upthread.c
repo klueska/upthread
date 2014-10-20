@@ -11,14 +11,21 @@
 #include <parlib/mcs.h>
 #include <parlib/vcore.h>
 #include <parlib/syscall.h>
+#include <parlib/waitfreelist.h>
 #include "upthread.h"
 
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
 
-struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
-struct mcs_lock queue_lock;
-int threads_ready = 0;
+struct pvc_wfl_slot {
+	struct wfl_slot slot;
+	STAILQ_ENTRY(pvc_wfl_slot) next;
+};
+STAILQ_HEAD(pvc_wfl_slot_queue, pvc_wfl_slot);
+
+struct wfl new_queue;
+struct wfl ready_queue;
+struct pvc_wfl_slot_queue *pvc_queue;
 bool can_adjust_vcores = TRUE;
 
 /* Helper / local functions */
@@ -52,6 +59,68 @@ struct schedule_ops *sched_ops = &upthread_sched_ops;
 static void __upthread_free_stack(struct upthread_tcb *pt);
 static int __upthread_allocate_stack(struct upthread_tcb *pt);
 
+static void __pth_thread_enqueue(struct upthread_tcb *upthread)
+{
+	struct pvc_wfl_slot *slot;
+	int vcoreid = vcore_id();
+	int state = upthread->state;
+	upthread->last_vcore = vcoreid;
+	upthread->state = UPTH_RUNNABLE;
+	if (state == UPTH_CREATED) {
+		slot = (void*)wfl_insert(&new_queue, upthread);
+	} else {
+		slot = (void*)wfl_insert(&ready_queue, upthread);
+		STAILQ_INSERT_TAIL(&pvc_queue[vcoreid], slot, next);
+	}
+}
+
+static struct upthread_tcb *__pth_thread_dequeue()
+{
+	int vcoreid = vcore_id();
+	struct upthread_tcb *upthread;
+	struct pvc_wfl_slot *slot;
+
+	/* Loop through a bunch of options for dequeuing a thread */
+	while (1) {
+		/* First try in the new queue. */
+		if ((upthread = wfl_remove(&new_queue)))
+			return upthread;
+
+		/* If nothing new, look in our pvc_queue to see if we previously ran
+		 * anything that is currently sitting in the global ready queue. */
+		slot = STAILQ_FIRST(&pvc_queue[vcoreid]);
+
+		/* If there is nothing in our pvc queue, try and grab something from the
+		 * global ready queue, and return it. */
+		if (!slot)
+			return wfl_remove(&ready_queue);
+
+		/* If there is something, then remove it from our queue and start working
+		 * on it below. */
+		STAILQ_REMOVE_HEAD(&pvc_queue[vcoreid], next);
+
+		/* Try and pull that thread directly out of the global ready queue. */
+		if ((upthread = wfl_remove_from(&ready_queue, &slot->slot))) {
+			/* If we found a thread and its last_vcore field matches our vcore
+			 * id, we're done. */
+			if (upthread->last_vcore == vcoreid)
+				return upthread;
+			/* If its last_vcore field does not match our vcore id, then
+			 * someone else has already ran this thread elsewhere and has taken
+			 * over the slot. Try and put the thread back in the slot before
+			 * someone notices. */
+			if (!(wfl_insert_into(&ready_queue, &slot->slot, upthread))) {
+				/* If that slot got stolen while we were checking the thread,
+				 * oops... I guess he's ours now, go ahead and run him. */
+				return upthread;
+			}
+		}
+		/* If we made it here, then someone else has taken control of the
+		 * thread we were tracking in our pvc_queue, so loop back around and
+		 * try to find another. */
+	}
+}
+
 /* Called from vcore entry.  Options usually include restarting whoever was
  * running there before or running a new thread.  Events are handled out of
  * event.c (table of function pointers, stuff like that). */
@@ -67,22 +136,8 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
 	 * had a new event come in, one that may make us able to get a new_thread */
 	do {
-        mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-		mcs_lock_lock(&queue_lock, &qnode);
-		new_thread = TAILQ_FIRST(&ready_queue);
-		if (new_thread) {
-			TAILQ_REMOVE(&ready_queue, new_thread, next);
-			threads_ready--;
-			mcs_lock_unlock(&queue_lock, &qnode);
-			/* If you see what looks like the same uthread running in multiple
-			 * places, your list might be jacked up.  Turn this on. */
-			printd("[P] got uthread %08p on vc %d state %08p flags %08p\n",
-			       new_thread, vcoreid,
-			       ((struct uthread*)new_thread)->state,
-			       ((struct uthread*)new_thread)->flags);
+		if ((new_thread = __pth_thread_dequeue()))
 			break;
-		}
-		mcs_lock_unlock(&queue_lock, &qnode);
 		/* no new thread, try to yield */
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
 		/* TODO: you can imagine having something smarter here, like spin for a
@@ -122,14 +177,9 @@ void pth_thread_runnable(struct uthread *uthread)
 		default:
 			printf("Odd state %d for upthread %p\n", upthread->state, upthread);
 	}
-	upthread->state = UPTH_RUNNABLE;
 	/* Insert the newly created thread into the ready queue of threads.
 	 * It will be removed from this queue later when vcore_entry() comes up */
-    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
-	TAILQ_INSERT_TAIL(&ready_queue, upthread, next);
-	threads_ready++;
-	mcs_lock_unlock(&queue_lock, &qnode);
+	__pth_thread_enqueue(upthread);
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
 	if (can_adjust_vcores)
@@ -241,7 +291,6 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
  * a uthread representing thread0 (int main()) */
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
-	mcs_lock_init(&queue_lock);
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
 	assert(t);
@@ -267,6 +316,14 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	 * yet, so if a 2LS somehow wants to have its init stuff use things like
 	 * vcore stacks or TLSs, we'll need to change this. */
 	uthread_lib_init((struct uthread*)t);
+
+	/* Now that we have vcores, initialize the global wait free ready queues */
+	wfl_init_ss(&new_queue, sizeof(struct pvc_wfl_slot));
+	wfl_init_ss(&ready_queue, sizeof(struct pvc_wfl_slot));
+	/* Initialize the per vcore run queues */
+	pvc_queue = malloc(sizeof(struct pvc_wfl_slot_queue) * max_vcores());
+	for (int i=0; i < max_vcores(); i++)
+		STAILQ_INIT(&pvc_queue[i]);
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
