@@ -429,8 +429,12 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 /* Cooperative yielding of the processor, to allow other threads to run */
 int upthread_yield(void)
 {
+	/* Quick optimization to NOT yield if there is nothing else to run... */
+	if (wfl_size(&new_queue) == 0 && STAILQ_EMPTY(&pvc_queue[vcore_id()]))
+		return 0;
+	/* Do the actual yield */
 	uthread_yield(TRUE, __pth_yield_cb, 0);
-	return 0;
+	return 1;
 }
 
 int upthread_mutexattr_init(upthread_mutexattr_t* attr)
