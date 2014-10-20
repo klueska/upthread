@@ -17,15 +17,8 @@
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
 
-struct pvc_wfl_slot {
-	struct wfl_slot slot;
-	STAILQ_ENTRY(pvc_wfl_slot) next;
-};
-STAILQ_HEAD(pvc_wfl_slot_queue, pvc_wfl_slot);
-
 struct wfl new_queue;
-struct wfl *ready_queue;
-struct pvc_wfl_slot_queue *pvc_queue;
+struct upthread_queue *pvc_queue;
 bool can_adjust_vcores = TRUE;
 
 /* Helper / local functions */
@@ -61,71 +54,29 @@ static int __upthread_allocate_stack(struct upthread_tcb *pt);
 
 static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 {
-	struct pvc_wfl_slot *slot;
 	int vcoreid = vcore_id();
 	int state = upthread->state;
-	upthread->last_vcore = vcoreid;
 	upthread->state = UPTH_RUNNABLE;
-	if (state == UPTH_CREATED) {
-		slot = (void*)wfl_insert(&new_queue, upthread);
-	} else {
-		slot = (void*)wfl_insert(&ready_queue[vcoreid], upthread);
-		STAILQ_INSERT_TAIL(&pvc_queue[vcoreid], slot, next);
-	}
+	if (state == UPTH_CREATED)
+		wfl_insert(&new_queue, upthread);
+	else 
+		STAILQ_INSERT_TAIL(&pvc_queue[vcoreid], upthread, next);
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
 {
 	int vcoreid = vcore_id();
 	struct upthread_tcb *upthread;
-	struct pvc_wfl_slot *slot;
 
-	/* Loop through a bunch of options for dequeuing a thread */
-	while (1) {
-		/* First try in the new queue. */
-		if ((upthread = wfl_remove(&new_queue)))
-			return upthread;
+	/* First try in the new queue. */
+	if ((upthread = wfl_remove(&new_queue)))
+		return upthread;
 
-		/* If nothing new, look in our pvc_queue to see if we previously ran
-		 * anything that is currently sitting in the ready queue. */
-		slot = STAILQ_FIRST(&pvc_queue[vcoreid]);
-
-		/* If there is nothing in our pvc queue, try and grab something from the
-		 * other ready queues, and return it. */
-		if (!slot) {
-			int i = (vcoreid + 1) % max_vcores();
-			while(i != vcoreid) {
-				if ((upthread = wfl_remove(&ready_queue[i])))
-					return upthread;
-				i = (i + 1) % max_vcores();
-			}
-			return NULL;
-		}
-
-		/* If there is something, then remove it from our queue and start working
-		 * on it below. */
+	/* If nothing new, look in our pvc_queue to see if we previously ran
+	 * anything that is currently sitting in the ready queue. */
+	if ((upthread = STAILQ_FIRST(&pvc_queue[vcoreid])))
 		STAILQ_REMOVE_HEAD(&pvc_queue[vcoreid], next);
-
-		/* Try and pull the thread directly out of the ready queue. */
-		if ((upthread = wfl_remove_from(&ready_queue[vcoreid], &slot->slot))) {
-			/* If we found a thread and its last_vcore field matches our vcore
-			 * id, we're done. */
-			if (upthread->last_vcore == vcoreid)
-				return upthread;
-			/* If its last_vcore field does not match our vcore id, then
-			 * someone else has already ran this thread elsewhere and has taken
-			 * over the slot. Try and put the thread back in the slot before
-			 * someone notices. */
-			if (!(wfl_insert_into(&ready_queue[vcoreid], &slot->slot, upthread))) {
-				/* If that slot got stolen while we were checking the thread,
-				 * oops... I guess he's ours now, go ahead and run him. */
-				return upthread;
-			}
-		}
-		/* If we made it here, then someone else has taken control of the
-		 * thread we were tracking in our pvc_queue, so loop back around and
-		 * try to find another. */
-	}
+	return upthread;
 }
 
 /* Called from vcore entry.  Options usually include restarting whoever was
@@ -311,7 +262,6 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	t->detached = TRUE;
 	t->state = UPTH_RUNNING;
 	t->joiner = 0;
-	t->last_vcore = -1;
 	assert(t->id == 0);
 
 	/* Handle syscall events. */
@@ -326,14 +276,11 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	uthread_lib_init((struct uthread*)t);
 
 	/* Now that we have vcores, initialize the global new thread queue */
-	wfl_init_ss(&new_queue, sizeof(struct pvc_wfl_slot));
+	wfl_init(&new_queue);
 	/* And initialize the per vcore queues */
-	pvc_queue = malloc(sizeof(struct pvc_wfl_slot_queue) * max_vcores());
-	ready_queue = malloc(sizeof(struct wfl) * max_vcores());
-	for (int i=0; i < max_vcores(); i++) {
+	pvc_queue = malloc(sizeof(struct upthread_queue) * max_vcores());
+	for (int i=0; i < max_vcores(); i++)
 		STAILQ_INIT(&pvc_queue[i]);
-		wfl_init_ss(&ready_queue[i], sizeof(struct pvc_wfl_slot));
-	}
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
@@ -348,7 +295,6 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 	upthread->id = get_next_pid();
 	upthread->detached = FALSE;				/* default */
 	upthread->joiner = 0;
-	upthread->last_vcore = -1;
 	/* Respect the attributes */
 	if (attr) {
 		if (attr->stacksize)					/* don't set a 0 stacksize */

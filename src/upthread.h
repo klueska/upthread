@@ -5,7 +5,7 @@
 #include <parlib/vcore.h>
 #include <parlib/uthread.h>
 #include <parlib/mcs.h>
-//#include <parlib/syscall.h>
+#include <parlib/waitfreelist.h>
 
 #ifdef __cplusplus
   extern "C" {
@@ -27,7 +27,7 @@
 struct upthread_tcb;
 struct upthread_tcb {
 	struct uthread uthread;
-	TAILQ_ENTRY(upthread_tcb) next;
+	STAILQ_ENTRY(upthread_tcb) next;
 	int state;
 	bool detached;
 	struct upthread_tcb *joiner;			/* raced on by exit and join */
@@ -37,10 +37,9 @@ struct upthread_tcb {
 	void *(*start_routine)(void*);
 	void *arg;
 	void *retval;
-	int last_vcore;
 };
 typedef struct upthread_tcb* upthread_t;
-TAILQ_HEAD(upthread_queue, upthread_tcb);
+STAILQ_HEAD(upthread_queue, upthread_tcb);
 
 /* Per-vcore data structures to manage syscalls.  The ev_q is where we tell the
  * kernel to signal us.  We don't need a lock since this is per-vcore and
