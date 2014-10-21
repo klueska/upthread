@@ -17,10 +17,8 @@
 //#define printd(...) printf(__VA_ARGS__)
 
 struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
-struct upthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
 struct mcs_lock queue_lock;
 int threads_ready = 0;
-int threads_active = 0;
 bool can_adjust_vcores = TRUE;
 
 /* Helper / local functions */
@@ -74,8 +72,6 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		new_thread = TAILQ_FIRST(&ready_queue);
 		if (new_thread) {
 			TAILQ_REMOVE(&ready_queue, new_thread, next);
-			TAILQ_INSERT_TAIL(&active_queue, new_thread, next);
-			threads_active++;
 			threads_ready--;
 			mcs_lock_unlock(&queue_lock, &qnode);
 			/* If you see what looks like the same uthread running in multiple
@@ -153,14 +149,6 @@ void pth_thread_runnable(struct uthread *uthread)
 void pth_thread_paused(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
-	/* Remove from the active list.  Note that I don't particularly care about
-	 * the active list.  We keep it around because it causes bugs and keeps us
-	 * honest.  After all, some 2LS may want an active list */
-    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
-	threads_active--;
-	TAILQ_REMOVE(&active_queue, upthread, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
 	/* communicate to pth_thread_runnable */
 	upthread->state = UPTH_BLK_PAUSED;
 	/* At this point, you could do something clever, like put it at the front of
@@ -268,12 +256,6 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	t->state = UPTH_RUNNING;
 	t->joiner = 0;
 	assert(t->id == 0);
-	/* Put the new upthread (thread0) on the active queue */
-	mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);	/* arguably, we don't need these (_S mode) */
-	threads_active++;
-	TAILQ_INSERT_TAIL(&active_queue, t, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
 
 	/* Handle syscall events. */
 	/* These functions are declared in parlib for simulating async syscalls on linux */
@@ -325,15 +307,9 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 }
 
 /* Helper that all upthread-controlled yield paths call.  Just does some
- * accounting.  This is another example of how the much-loathed (and loved)
- * active queue is keeping us honest. */
+ * accounting. */
 static void __upthread_generic_yield(struct upthread_tcb *upthread)
 {
-    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
-	threads_active--;
-	TAILQ_REMOVE(&active_queue, upthread, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
 }
 
 /* Callback/bottom half of join, called from __uthread_yield (vcore context).
@@ -675,11 +651,6 @@ static void pth_blockon_syscall(struct uthread* uthread, void *sysc)
   struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
   upthread->state = UPTH_BLK_SYSC;
 
-  mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-  mcs_lock_lock(&queue_lock, &qnode);
-  threads_active--;
-  TAILQ_REMOVE(&active_queue, upthread, next);
-  mcs_lock_unlock(&queue_lock, &qnode);
   /* Set things up so we can wake this thread up later */
   ((struct syscall*)sysc)->u_data = uthread;
 }
