@@ -21,8 +21,9 @@ struct vc_mgmt {
 	struct upthread_queue tqueue;
 	spinlock_t tqlock;
 } __attribute__((aligned(ARCH_CL_SIZE)));
-
 struct vc_mgmt *vc_mgmt;
+#define tqueue(i) (vc_mgmt[i].tqueue)
+#define tqlock(i) (vc_mgmt[i].tqlock)
 bool can_adjust_vcores = TRUE;
 
 /* Helper / local functions */
@@ -66,9 +67,9 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 		vcoreid = next_vcore;
 		next_vcore = (next_vcore + 1) % num_vcores();
 	}
-	spinlock_lock(&(vc_mgmt[vcoreid].tqlock));
-	STAILQ_INSERT_TAIL(&(vc_mgmt[vcoreid].tqueue), upthread, next);
-	spinlock_unlock(&(vc_mgmt[vcoreid].tqlock));
+	spinlock_lock(&tqlock(vcoreid));
+	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
+	spinlock_unlock(&tqlock(vcoreid));
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
@@ -76,10 +77,10 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	int vcoreid = vcore_id();
 	struct upthread_tcb *upthread;
 
-	spinlock_lock(&(vc_mgmt[vcoreid].tqlock));
-	if ((upthread = STAILQ_FIRST(&(vc_mgmt[vcoreid].tqueue))))
-		STAILQ_REMOVE_HEAD(&(vc_mgmt[vcoreid].tqueue), next);
-	spinlock_unlock(&(vc_mgmt[vcoreid].tqlock));
+	spinlock_lock(&tqlock(vcoreid));
+	if ((upthread = STAILQ_FIRST(&tqueue(vcoreid))))
+		STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
+	spinlock_unlock(&tqlock(vcoreid));
 	return upthread;
 }
 
@@ -282,8 +283,8 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	/* Now that we have vcores, initialize the per vcore stuff. */
 	vc_mgmt = malloc(sizeof(struct vc_mgmt) * max_vcores());
 	for (int i=0; i < max_vcores(); i++) {
-		STAILQ_INIT(&(vc_mgmt[i].tqueue));
-		spinlock_init(&(vc_mgmt[i].tqlock));
+		STAILQ_INIT(&tqueue(i));
+		spinlock_init(&tqlock(i));
 	}
 }
 
@@ -434,7 +435,7 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 int upthread_yield(void)
 {
 	/* Quick optimization to NOT yield if there is nothing else to run... */
-	if (STAILQ_EMPTY(&(vc_mgmt[vcore_id()].tqueue)))
+	if (STAILQ_EMPTY(&tqueue(vcore_id())))
 		return 0;
 	/* Do the actual yield */
 	uthread_yield(TRUE, __pth_yield_cb, 0);
