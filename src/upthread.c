@@ -19,9 +19,9 @@
 
 struct vc_mgmt {
 	struct upthread_queue tqueue;
-} __attribute__((aligned(128)));
+	spinlock_t tqlock;
+} __attribute__((aligned(ARCH_CL_SIZE)));
 
-struct wfl new_queue;
 struct vc_mgmt *vc_mgmt;
 bool can_adjust_vcores = TRUE;
 
@@ -61,10 +61,14 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 	int vcoreid = vcore_id();
 	int state = upthread->state;
 	upthread->state = UPTH_RUNNABLE;
-	if (state == UPTH_CREATED)
-		wfl_insert(&new_queue, upthread);
-	else 
-		STAILQ_INSERT_TAIL(&(vc_mgmt[vcoreid].tqueue), upthread, next);
+	if (state == UPTH_CREATED) {
+		static int next_vcore = 0;
+		vcoreid = next_vcore;
+		next_vcore = (next_vcore + 1) % num_vcores();
+	}
+	spinlock_lock(&(vc_mgmt[vcoreid].tqlock));
+	STAILQ_INSERT_TAIL(&(vc_mgmt[vcoreid].tqueue), upthread, next);
+	spinlock_unlock(&(vc_mgmt[vcoreid].tqlock));
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
@@ -72,14 +76,10 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	int vcoreid = vcore_id();
 	struct upthread_tcb *upthread;
 
-	/* First try in the new queue. */
-	if ((upthread = wfl_remove(&new_queue)))
-		return upthread;
-
-	/* If nothing new, look in our tqueue to see if we previously ran
-	 * anything that is currently sitting in the ready queue. */
+	spinlock_lock(&(vc_mgmt[vcoreid].tqlock));
 	if ((upthread = STAILQ_FIRST(&(vc_mgmt[vcoreid].tqueue))))
 		STAILQ_REMOVE_HEAD(&(vc_mgmt[vcoreid].tqueue), next);
+	spinlock_unlock(&(vc_mgmt[vcoreid].tqlock));
 	return upthread;
 }
 
@@ -279,13 +279,12 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	 * vcore stacks or TLSs, we'll need to change this. */
 	uthread_lib_init((struct uthread*)t);
 
-	/* Now that we have vcores, initialize the global new thread queue */
-	wfl_init(&new_queue);
-	/* And initialize the per vcore queues */
+	/* Now that we have vcores, initialize the per vcore stuff. */
 	vc_mgmt = malloc(sizeof(struct vc_mgmt) * max_vcores());
-	printf("vc size: %d\n", sizeof(struct vc_mgmt));
-	for (int i=0; i < max_vcores(); i++)
+	for (int i=0; i < max_vcores(); i++) {
 		STAILQ_INIT(&(vc_mgmt[i].tqueue));
+		spinlock_init(&(vc_mgmt[i].tqlock));
+	}
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
@@ -435,7 +434,7 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 int upthread_yield(void)
 {
 	/* Quick optimization to NOT yield if there is nothing else to run... */
-	if (wfl_size(&new_queue) == 0 && STAILQ_EMPTY(&(vc_mgmt[vcore_id()].tqueue)))
+	if (STAILQ_EMPTY(&(vc_mgmt[vcore_id()].tqueue)))
 		return 0;
 	/* Do the actual yield */
 	uthread_yield(TRUE, __pth_yield_cb, 0);

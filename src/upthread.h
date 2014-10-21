@@ -37,16 +37,9 @@ struct upthread_tcb {
 	void *(*start_routine)(void*);
 	void *arg;
 	void *retval;
-};
+} __attribute__((aligned(ARCH_CL_SIZE)));
 typedef struct upthread_tcb* upthread_t;
 STAILQ_HEAD(upthread_queue, upthread_tcb);
-
-/* Per-vcore data structures to manage syscalls.  The ev_q is where we tell the
- * kernel to signal us.  We don't need a lock since this is per-vcore and
- * accessed in vcore context. */
-struct sysc_mgmt {
-	struct event_queue 			*ev_q;
-};
 
 #define UPTHREAD_ONCE_INIT 0
 #define UPTHREAD_BARRIER_SERIAL_THREAD 12345
