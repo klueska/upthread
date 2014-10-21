@@ -17,8 +17,12 @@
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
 
+struct vc_mgmt {
+	struct upthread_queue tqueue;
+} __attribute__((aligned(128)));
+
 struct wfl new_queue;
-struct upthread_queue *pvc_queue;
+struct vc_mgmt *vc_mgmt;
 bool can_adjust_vcores = TRUE;
 
 /* Helper / local functions */
@@ -60,7 +64,7 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 	if (state == UPTH_CREATED)
 		wfl_insert(&new_queue, upthread);
 	else 
-		STAILQ_INSERT_TAIL(&pvc_queue[vcoreid], upthread, next);
+		STAILQ_INSERT_TAIL(&(vc_mgmt[vcoreid].tqueue), upthread, next);
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
@@ -72,10 +76,10 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	if ((upthread = wfl_remove(&new_queue)))
 		return upthread;
 
-	/* If nothing new, look in our pvc_queue to see if we previously ran
+	/* If nothing new, look in our tqueue to see if we previously ran
 	 * anything that is currently sitting in the ready queue. */
-	if ((upthread = STAILQ_FIRST(&pvc_queue[vcoreid])))
-		STAILQ_REMOVE_HEAD(&pvc_queue[vcoreid], next);
+	if ((upthread = STAILQ_FIRST(&(vc_mgmt[vcoreid].tqueue))))
+		STAILQ_REMOVE_HEAD(&(vc_mgmt[vcoreid].tqueue), next);
 	return upthread;
 }
 
@@ -278,9 +282,10 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	/* Now that we have vcores, initialize the global new thread queue */
 	wfl_init(&new_queue);
 	/* And initialize the per vcore queues */
-	pvc_queue = malloc(sizeof(struct upthread_queue) * max_vcores());
+	vc_mgmt = malloc(sizeof(struct vc_mgmt) * max_vcores());
+	printf("vc size: %d\n", sizeof(struct vc_mgmt));
 	for (int i=0; i < max_vcores(); i++)
-		STAILQ_INIT(&pvc_queue[i]);
+		STAILQ_INIT(&(vc_mgmt[i].tqueue));
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
@@ -430,7 +435,7 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 int upthread_yield(void)
 {
 	/* Quick optimization to NOT yield if there is nothing else to run... */
-	if (wfl_size(&new_queue) == 0 && STAILQ_EMPTY(&pvc_queue[vcore_id()]))
+	if (wfl_size(&new_queue) == 0 && STAILQ_EMPTY(&(vc_mgmt[vcore_id()].tqueue)))
 		return 0;
 	/* Do the actual yield */
 	uthread_yield(TRUE, __pth_yield_cb, 0);
