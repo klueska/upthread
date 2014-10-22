@@ -255,8 +255,10 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
 	/* Create a upthread_tcb for the main thread */
-	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
+	upthread_t t = parlib_aligned_alloc(ARCH_CL_SIZE,
+	                      sizeof(struct upthread_tcb));
 	assert(t);
+	memset(t, 0, sizeof(struct upthread_tcb));
 	t->id = get_next_pid();
 	/* Fill in the main context stack info. */
 	void *stackbottom;
@@ -281,7 +283,8 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	uthread_lib_init((struct uthread*)t);
 
 	/* Now that we have vcores, initialize the per vcore stuff. */
-	vc_mgmt = malloc(sizeof(struct vc_mgmt) * max_vcores());
+	vc_mgmt = parlib_aligned_alloc(ARCH_CL_SIZE,
+	              sizeof(struct vc_mgmt) * max_vcores());
 	for (int i=0; i < max_vcores(); i++) {
 		STAILQ_INIT(&tqueue(i));
 		spinlock_init(&tqlock(i));
@@ -293,8 +296,9 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 {
 	/* Create the actual thread */
 	struct upthread_tcb *upthread;
-	upthread = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
+	upthread = parlib_aligned_alloc(ARCH_CL_SIZE, sizeof(struct upthread_tcb));
 	assert(upthread);
+	memset(upthread, 0, sizeof(struct upthread_tcb));
 	upthread->stacksize = UPTHREAD_STACK_SIZE;	/* default */
 	upthread->state = UPTH_CREATED;
 	upthread->id = get_next_pid();
