@@ -45,7 +45,7 @@ void *worker_thread(void* arg)
 
 int main(int argc, char** argv) 
 {
-	//upthread_set_sched_period(1000000);
+	upthread_set_sched_period(1000000);
 	/* OS dependent prep work */
 	if (nr_vcores) {
 		/* Only do the vcore trickery if requested */
