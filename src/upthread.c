@@ -255,8 +255,10 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 {
 	mcs_lock_init(&queue_lock);
 	/* Create a upthread_tcb for the main thread */
-	upthread_t t = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
+	upthread_t t = parlib_aligned_alloc(ARCH_CL_SIZE,
+	                      sizeof(struct upthread_tcb));
 	assert(t);
+	memset(t, 0, sizeof(struct upthread_tcb));
 	t->id = get_next_pid();
 	/* Fill in the main context stack info. */
 	void *stackbottom;
@@ -292,8 +294,9 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 {
 	/* Create the actual thread */
 	struct upthread_tcb *upthread;
-	upthread = (upthread_t)calloc(1, sizeof(struct upthread_tcb));
+	upthread = parlib_aligned_alloc(ARCH_CL_SIZE, sizeof(struct upthread_tcb));
 	assert(upthread);
+	memset(upthread, 0, sizeof(struct upthread_tcb));
 	upthread->stacksize = UPTHREAD_STACK_SIZE;	/* default */
 	upthread->state = UPTH_CREATED;
 	upthread->id = get_next_pid();
