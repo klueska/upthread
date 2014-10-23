@@ -20,11 +20,17 @@
 struct vc_mgmt {
 	struct upthread_queue tqueue;
 	spinlock_t tqlock;
+	int tqsize;
+    unsigned int rseed;
 } __attribute__((aligned(ARCH_CL_SIZE)));
 struct vc_mgmt *vc_mgmt;
 #define tqueue(i) (vc_mgmt[i].tqueue)
 #define tqlock(i) (vc_mgmt[i].tqlock)
+#define tqsize(i) (vc_mgmt[i].tqsize)
+#define rseed(i)  (vc_mgmt[i].rseed)
+
 bool can_adjust_vcores = TRUE;
+bool can_steal = TRUE;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -69,18 +75,54 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 	}
 	spinlock_lock(&tqlock(vcoreid));
 	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
+	tqsize(vcoreid)++;
 	spinlock_unlock(&tqlock(vcoreid));
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
 {
+	struct upthread_tcb *tdequeue(int vcoreid)
+	{
+		struct upthread_tcb *upthread;
+		spinlock_lock(&tqlock(vcoreid));
+		if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
+			STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
+			tqsize(vcoreid)--;
+		}
+		spinlock_unlock(&tqlock(vcoreid));
+		return upthread;
+	}
+
 	int vcoreid = vcore_id();
 	struct upthread_tcb *upthread;
 
-	spinlock_lock(&tqlock(vcoreid));
-	if ((upthread = STAILQ_FIRST(&tqueue(vcoreid))))
-		STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
-	spinlock_unlock(&tqlock(vcoreid));
+	/* Try and grab a thread from our queue */
+	upthread = tdequeue(vcoreid);
+
+	/* If there isn't one, try and steal one from someone else's queue. This
+	 * assumes num_vcores() is pretty stable across the whole run for high
+	 * performance.  */
+    if (can_steal && !upthread) {
+		/* First try doing power of two choices. */
+        int choice[2] = { rand_r(&rseed(vcoreid)) % num_vcores(),
+                          rand_r(&rseed(vcoreid)) % num_vcores()};
+		int size[2] = { tqsize(choice[0]),
+		                tqsize(choice[1])};
+		int id = (size[0] > size[1]) ? 0 : 1;
+		if (tqsize(choice[id]) > 0)
+			upthread = tdequeue(choice[id]);
+
+		/* Fall back to looping through all vcores. This time I go through
+ 		 * max_vcores() just to make sure I don't miss anything. */
+		if (!upthread) {
+			int i = (vcoreid + 1) % max_vcores();
+			while(i != vcoreid) {
+				upthread = tdequeue(i);
+				if (upthread) break;
+				i = (i + 1) % max_vcores();
+			}
+		}
+	}
 	return upthread;
 }
 
@@ -201,6 +243,14 @@ void upthread_can_vcore_request(bool can)
 	can_adjust_vcores = can;
 }
 
+/* Tells the upthread 2LS not to do any work stealing. Only run threadds placed
+ * in your local pvc queue. */
+void upthread_can_vcore_steal(bool can)
+{
+	/* checked when we would request or yield */
+	can_steal = can;
+}
+
 /* Pthread interface stuff and helpers */
 
 int upthread_attr_init(upthread_attr_t *a)
@@ -288,6 +338,8 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	for (int i=0; i < max_vcores(); i++) {
 		STAILQ_INIT(&tqueue(i));
 		spinlock_init(&tqlock(i));
+		tqsize(i) = 0;
+        rseed(i) = i;
 	}
 }
 
