@@ -119,7 +119,7 @@ typedef void** upthread_key_t;
 /* Akaros upthread extensions / hacks */
 void upthread_can_vcore_request(bool can);	/* default is TRUE */
 void upthread_can_vcore_steal(bool can);	/* default is TRUE */
-void upthread_set_num_vcores(int num);		/* default is 1 */
+void upthread_set_num_vcores(int num, int next);	/* default is 1,0 */
 void upthread_short_circuit_yield(bool ss);	/* default is TRUE */
 
 /* The upthreads API */

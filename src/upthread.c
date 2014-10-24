@@ -32,6 +32,7 @@ struct vc_mgmt *vc_mgmt;
 static bool can_adjust_vcores = TRUE;
 static bool can_steal = TRUE;
 static int nr_vcores = 1;
+static int next_vcore = 0;
 static bool ss_yield = TRUE;
 
 /* Helper / local functions */
@@ -71,7 +72,6 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 	int state = upthread->state;
 	upthread->state = UPTH_RUNNABLE;
 	if (state == UPTH_CREATED) {
-		static int next_vcore = 0;
 		vcoreid = next_vcore;
 		next_vcore = (next_vcore + 1) % nr_vcores;
 	}
@@ -255,9 +255,10 @@ void upthread_can_vcore_steal(bool can)
 
 /* Tells the upthread 2LS how many vcores to consider when placing newly
  * created threads in the per vcore run queues. */
-void upthread_set_num_vcores(int num)
+void upthread_set_num_vcores(int num, int next)
 {
 	nr_vcores = num;
+	next_vcore = next;
 }
 
 /* Tells the upthread 2LS to optimize the yield path with a short circuit if
