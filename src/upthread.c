@@ -29,8 +29,10 @@ struct vc_mgmt *vc_mgmt;
 #define tqsize(i) (vc_mgmt[i].tqsize)
 #define rseed(i)  (vc_mgmt[i].rseed)
 
-bool can_adjust_vcores = TRUE;
-bool can_steal = TRUE;
+static bool can_adjust_vcores = TRUE;
+static bool can_steal = TRUE;
+static int nr_vcores = 1;
+static bool ss_yield = TRUE;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -71,7 +73,7 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 	if (state == UPTH_CREATED) {
 		static int next_vcore = 0;
 		vcoreid = next_vcore;
-		next_vcore = (next_vcore + 1) % num_vcores();
+		next_vcore = (next_vcore + 1) % nr_vcores;
 	}
 	spinlock_lock(&tqlock(vcoreid));
 	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
@@ -100,12 +102,12 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	upthread = tdequeue(vcoreid);
 
 	/* If there isn't one, try and steal one from someone else's queue. This
-	 * assumes num_vcores() is pretty stable across the whole run for high
+	 * assumes nr_vcores is pretty stable across the whole run for high
 	 * performance.  */
     if (can_steal && !upthread) {
 		/* First try doing power of two choices. */
-        int choice[2] = { rand_r(&rseed(vcoreid)) % num_vcores(),
-                          rand_r(&rseed(vcoreid)) % num_vcores()};
+		int choice[2] = { rand_r(&rseed(vcoreid)) % nr_vcores,
+		                  rand_r(&rseed(vcoreid)) % nr_vcores};
 		int size[2] = { tqsize(choice[0]),
 		                tqsize(choice[1])};
 		int id = (size[0] > size[1]) ? 0 : 1;
@@ -243,12 +245,27 @@ void upthread_can_vcore_request(bool can)
 	can_adjust_vcores = can;
 }
 
-/* Tells the upthread 2LS not to do any work stealing. Only run threadds placed
+/* Tells the upthread 2LS not to do any work stealing. Only run threads placed
  * in your local pvc queue. */
 void upthread_can_vcore_steal(bool can)
 {
 	/* checked when we would request or yield */
 	can_steal = can;
+}
+
+/* Tells the upthread 2LS how many vcores to consider when placing newly
+ * created threads in the per vcore run queues. */
+void upthread_set_num_vcores(int num)
+{
+	nr_vcores = num;
+}
+
+/* Tells the upthread 2LS to optimize the yield path with a short circuit if
+ * it's local pvc queue is empty.  In this case it will not actually doa
+ * context switch out of itself and back in.  */
+void upthread_short_circuit_yield(bool ss)
+{
+	ss_yield = ss;
 }
 
 /* Pthread interface stuff and helpers */
@@ -491,7 +508,7 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 int upthread_yield(void)
 {
 	/* Quick optimization to NOT yield if there is nothing else to run... */
-	if (STAILQ_EMPTY(&tqueue(vcore_id())))
+	if (ss_yield && !tqsize(vcore_id()))
 		return 0;
 	/* Do the actual yield */
 	uthread_yield(TRUE, __pth_yield_cb, 0);
