@@ -258,7 +258,7 @@ void upthread_can_vcore_steal(bool can)
 void upthread_set_num_vcores(int num, int next)
 {
 	nr_vcores = num;
-	next_vcore = next;
+	next_vcore = next % num;
 }
 
 /* Tells the upthread 2LS to optimize the yield path with a short circuit if
