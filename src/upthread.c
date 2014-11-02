@@ -15,7 +15,6 @@
 
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
-//
 
 struct vc_mgmt {
 	struct upthread_queue tqueue;
@@ -32,7 +31,6 @@ struct vc_mgmt *vc_mgmt;
 static bool can_adjust_vcores = TRUE;
 static bool can_steal = TRUE;
 static int nr_vcores = 1;
-static int next_vcore = 0;
 static bool ss_yield = TRUE;
 
 /* Helper / local functions */
@@ -92,15 +90,55 @@ static void __upthread_free(struct upthread_tcb *pt)
 	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
 }
 
+int get_next_queue_id(struct upthread_tcb *upthread)
+{
+  static const int l1cachesize = 0x8000;
+	static int sid = 0;
+	static int cid = 0;
+	int vcoreid = vcore_id();
+	int hvc = max_vcores()/2;
+	long utls = (long)upthread->uthread.tls_desc % l1cachesize;
+	for (int i=0; (i < nr_vcores) && (i < hvc); i++) {
+		int j = i + hvc;
+		int tqsizei = i != vcoreid ? tqsize(i) : tqsize(i) + 1;
+		int tqsizecid = cid != vcoreid ? tqsize(cid) : tqsize(cid) + 1;
+		int tqsizesid = sid != vcoreid ? tqsize(sid) : tqsize(sid) + 1;
+		long pvtls = (long)vcore_tls_descs(i) % l1cachesize;
+		if (j < nr_vcores) {
+			int tqsizej = j != vcoreid ? tqsize(j) : tqsize(j) + 1;
+			long svtls = (long)vcore_tls_descs(j) % l1cachesize;
+			if ((utls != pvtls) && (utls != svtls)) {
+				if (tqsizei < tqsizecid)
+					cid = i;
+				else if (tqsizej < tqsizecid)
+					cid = j;
+			}
+			if (tqsizei < tqsizesid)
+				sid = i;
+			else if (tqsizej < tqsizesid)
+				sid = j;
+		} else {
+			if (utls != pvtls) {
+				if (tqsizei < tqsizecid)
+					cid = i;
+			}
+			if (tqsizei < tqsizesid)
+				sid = i;
+		}
+	}
+	if (tqsize(cid) <= tqsize(sid))
+		return cid;
+	return sid;
+}
+
 static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 {
 	int vcoreid = vcore_id();
 	int state = upthread->state;
 	upthread->state = UPTH_RUNNABLE;
-	if (state == UPTH_CREATED) {
-		vcoreid = next_vcore;
-		next_vcore = (next_vcore + 1) % nr_vcores;
-	}
+
+	if (state == UPTH_CREATED)
+		vcoreid = get_next_queue_id(upthread);
 	spinlock_lock(&tqlock(vcoreid));
 	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
 	tqsize(vcoreid)++;
@@ -281,10 +319,9 @@ void upthread_can_vcore_steal(bool can)
 
 /* Tells the upthread 2LS how many vcores to consider when placing newly
  * created threads in the per vcore run queues. */
-void upthread_set_num_vcores(int num, int next)
+void upthread_set_num_vcores(int num)
 {
 	nr_vcores = num;
-	next_vcore = next % num;
 }
 
 /* Tells the upthread 2LS to optimize the yield path with a short circuit if

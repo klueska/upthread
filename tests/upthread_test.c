@@ -74,7 +74,7 @@ int main(int argc, char** argv)
 		/* Only do the vcore trickery if requested */
 		upthread_can_vcore_request(FALSE);	/* 2LS won't manage vcores */
 		upthread_can_vcore_steal(FALSE);
-		upthread_set_num_vcores(nr_vcores, 0);
+		upthread_set_num_vcores(nr_vcores);
 		for (int i = 0; i < nr_vcores; i++) {
 			printf("Vcore %d not mapped to a particular pcore\n", i);
 		}
