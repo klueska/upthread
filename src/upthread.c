@@ -106,7 +106,7 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 
 static struct upthread_tcb *__pth_thread_dequeue()
 {
-	struct upthread_tcb *tdequeue(int vcoreid)
+	inline struct upthread_tcb *tdequeue(int vcoreid)
 	{
 		struct upthread_tcb *upthread;
 		spinlock_lock(&tqlock(vcoreid));
