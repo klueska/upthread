@@ -325,9 +325,8 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
 	vcore_lib_init();
-	vc_mgmt = parlib_aligned_alloc(ARCH_CL_SIZE,
+	vc_mgmt = parlib_aligned_alloc(PGSIZE,
 	              sizeof(struct vc_mgmt) * max_vcores());
-	memset(vc_mgmt, 0, sizeof(struct vc_mgmt) * max_vcores());
 	for (int i=0; i < max_vcores(); i++) {
 		STAILQ_INIT(&tqueue(i));
 		spinlock_init(&tqlock(i));
@@ -575,4 +574,3 @@ static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type)
   assert(sysc);
   restart_thread(sysc);
 }
-
