@@ -15,6 +15,7 @@
 
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
+//
 
 struct vc_mgmt {
 	struct upthread_queue tqueue;
@@ -70,14 +71,17 @@ static int get_next_pid(void)
 
 static struct upthread_tcb *__upthread_alloc(size_t stacksize)
 {
+	int offset = rand_r(&rseed(0)) % max_vcores() * ARCH_CL_SIZE;
+	stacksize += sizeof(struct upthread_tcb) + offset;
+	stacksize = ROUNDUP(stacksize, PGSIZE);
 	void *stackbot = mmap(
-		0, sizeof(struct upthread_tcb) + stacksize,
-		PROT_READ|PROT_WRITE|PROT_EXEC,
+		0, stacksize, PROT_READ|PROT_WRITE|PROT_EXEC,
 		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0
 	);
 	if (stackbot == MAP_FAILED)
 		abort();
-	struct upthread_tcb *upthread = stackbot + stacksize;
+	struct upthread_tcb *upthread = stackbot + stacksize
+	                                - sizeof(struct upthread_tcb) - offset;
 	upthread->stacktop = upthread;
 	upthread->stacksize = stacksize;
 	return upthread;
@@ -85,8 +89,7 @@ static struct upthread_tcb *__upthread_alloc(size_t stacksize)
 
 static void __upthread_free(struct upthread_tcb *pt)
 {
-	assert(!munmap(pt->stacktop - pt->stacksize,
-	               sizeof(struct upthread_tcb) + pt->stacksize));
+	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
 }
 
 static void __pth_thread_enqueue(struct upthread_tcb *upthread)
