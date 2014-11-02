@@ -8,10 +8,15 @@ SRCDIR = $(srcdir)/@SRCDIR@
 
 # List of C FILES to build into objects
 LIB_CFILES = \
-  @SRCDIR@/upthread.c
+  @SRCDIR@/upthread.c \
+  @SRCDIR@/mutex.c \
+  @SRCDIR@/condvar.c \
+  @SRCDIR@/barrier.c \
+  @SRCDIR@/futex.c
 
 LIB_HFILES = \
-  @SRCDIR@/upthread.h
+  @SRCDIR@/upthread.h \
+  @SRCDIR@/futex.h
 
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
 

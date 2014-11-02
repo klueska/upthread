@@ -398,7 +398,7 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 
 /* Helper that all upthread-controlled yield paths call.  Just does some
  * accounting. */
-static void __upthread_generic_yield(struct upthread_tcb *upthread)
+void __upthread_generic_yield(struct upthread_tcb *upthread)
 {
 }
 
@@ -511,15 +511,11 @@ int upthread_yield(void)
 	return 1;
 }
 
-int upthread_mutexattr_init(upthread_mutexattr_t* attr)
+int upthread_detach(upthread_t thread)
 {
-  attr->type = UPTHREAD_MUTEX_DEFAULT;
-  return 0;
-}
-
-int upthread_mutexattr_destroy(upthread_mutexattr_t* attr)
-{
-  return 0;
+	/* TODO: race on this state.  Someone could be trying to join now */
+	thread->detached = TRUE;
+	return 0;
 }
 
 int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
@@ -528,214 +524,9 @@ int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
 	return 0;
 }
 
-int upthread_mutexattr_gettype(const upthread_mutexattr_t* attr, int* type)
-{
-  *type = attr ? attr->type : UPTHREAD_MUTEX_DEFAULT;
-  return 0;
-}
-
-int upthread_mutexattr_settype(upthread_mutexattr_t* attr, int type)
-{
-  if(type != UPTHREAD_MUTEX_NORMAL)
-    return EINVAL;
-  attr->type = type;
-  return 0;
-}
-
-int upthread_mutex_init(upthread_mutex_t* m, const upthread_mutexattr_t* attr)
-{
-  m->attr = attr;
-  atomic_init(&m->lock, 0);
-  return 0;
-}
-
-/* Set *spun to 0 when calling this the first time.  It will yield after 'spins'
- * calls.  Use this for adaptive mutexes and such. */
-static inline void spin_to_sleep(unsigned int spins, unsigned int *spun)
-{
-	if ((*spun)++ == spins) {
-		upthread_yield();
-		*spun = 0;
-	}
-}
-
-int upthread_mutex_lock(upthread_mutex_t* m)
-{
-	unsigned int spinner = 0;
-	while(upthread_mutex_trylock(m))
-		while(*(volatile size_t*)&m->lock) {
-			cpu_relax();
-			spin_to_sleep(UPTHREAD_MUTEX_SPINS, &spinner);
-		}
-	/* normally we'd need a wmb() and a wrmb() after locking, but the
-	 * atomic_swap handles the CPU mb(), so just a cmb() is necessary. */
-	cmb();
-	return 0;
-}
-
-int upthread_mutex_trylock(upthread_mutex_t* m)
-{
-  return atomic_swap(&m->lock, 1) == 0 ? 0 : EBUSY;
-}
-
-int upthread_mutex_unlock(upthread_mutex_t* m)
-{
-  /* keep reads and writes inside the protected region */
-  rwmb();
-  wmb();
-  atomic_set(&m->lock, 0);
-  return 0;
-}
-
-int upthread_mutex_destroy(upthread_mutex_t* m)
-{
-  return 0;
-}
-
-int upthread_cond_init(upthread_cond_t *c, const upthread_condattr_t *a)
-{
-  c->attr = a;
-  memset(c->waiters,0,sizeof(c->waiters));
-  memset(c->in_use,0,sizeof(c->in_use));
-  c->next_waiter = 0;
-  return 0;
-}
-
-int upthread_cond_destroy(upthread_cond_t *c)
-{
-  return 0;
-}
-
-int upthread_cond_broadcast(upthread_cond_t *c)
-{
-  memset(c->waiters,0,sizeof(c->waiters));
-  return 0;
-}
-
-int upthread_cond_signal(upthread_cond_t *c)
-{
-  int i;
-  for(i = 0; i < MAX_UPTHREADS; i++)
-  {
-    if(c->waiters[i])
-    {
-      c->waiters[i] = 0;
-      break;
-    }
-  }
-  return 0;
-}
-
-int upthread_cond_wait(upthread_cond_t *c, upthread_mutex_t *m)
-{
-  uint32_t old_waiter = c->next_waiter;
-  uint32_t my_waiter = c->next_waiter;
-  
-  //allocate a slot
-  while (atomic_swap_u32(& (c->in_use[my_waiter]), SLOT_IN_USE) == SLOT_IN_USE)
-  {
-    my_waiter = (my_waiter + 1) % MAX_UPTHREADS;
-    assert (old_waiter != my_waiter);  // do not want to wrap around
-  }
-  c->waiters[my_waiter] = WAITER_WAITING;
-  c->next_waiter = (my_waiter+1) % MAX_UPTHREADS;  // race on next_waiter but ok, because it is advisary
-
-  upthread_mutex_unlock(m);
-
-  volatile uint32_t* poll = &c->waiters[my_waiter];
-  while(*poll);
-  c->in_use[my_waiter] = SLOT_FREE;
-  upthread_mutex_lock(m);
-
-  return 0;
-}
-
-int upthread_condattr_init(upthread_condattr_t *a)
-{
-  a = UPTHREAD_PROCESS_PRIVATE;
-  return 0;
-}
-
-int upthread_condattr_destroy(upthread_condattr_t *a)
-{
-  return 0;
-}
-
-int upthread_condattr_setpshared(upthread_condattr_t *a, int s)
-{
-  a->pshared = s;
-  return 0;
-}
-
-int upthread_condattr_getpshared(upthread_condattr_t *a, int *s)
-{
-  *s = a->pshared;
-  return 0;
-}
-
 upthread_t upthread_self()
 {
   return (struct upthread_tcb*)current_uthread;
-}
-
-int upthread_equal(upthread_t t1, upthread_t t2)
-{
-  return t1 == t2;
-}
-
-int upthread_once(upthread_once_t* once_control, void (*init_routine)(void))
-{
-  if (atomic_swap_u32(once_control, 1) == 0)
-    init_routine();
-  return 0;
-}
-
-int upthread_barrier_init(upthread_barrier_t* b, const upthread_barrierattr_t* a, int count)
-{
-  b->nprocs = b->count = count;
-  b->sense = 0;
-  upthread_mutex_init(&b->pmutex, 0);
-  return 0;
-}
-
-int upthread_barrier_wait(upthread_barrier_t* b)
-{
-  unsigned int spinner = 0;
-  int ls = !b->sense;
-
-  upthread_mutex_lock(&b->pmutex);
-  int count = --b->count;
-  upthread_mutex_unlock(&b->pmutex);
-
-  if(count == 0)
-  {
-    printd("Thread %d is last to hit the barrier, resetting...\n", upthread_self()->id);
-    b->count = b->nprocs;
-	wmb();
-    b->sense = ls;
-    return UPTHREAD_BARRIER_SERIAL_THREAD;
-  }
-  else
-  {
-    while(b->sense != ls) {
-      cpu_relax();
-      spin_to_sleep(UPTHREAD_BARRIER_SPINS, &spinner);
-    }
-    return 0;
-  }
-}
-
-int upthread_barrier_destroy(upthread_barrier_t* b)
-{
-  upthread_mutex_destroy(&b->pmutex);
-  return 0;
-}
-
-int upthread_detach(upthread_t thread)
-{
-	/* TODO: race on this state.  Someone could be trying to join now */
-	thread->detached = TRUE;
-	return 0;
 }
 
 static void pth_blockon_syscall(struct uthread* uthread, void *sysc)
@@ -782,14 +573,3 @@ static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type)
   restart_thread(sysc);
 }
 
-int upthread_kill(upthread_t __threadid, int __signo)
-{
-	printf("Not yet supported on parlib!\n");
-	return -1;
-}
-
-int upthread_sigmask(int how, const sigset_t *set, sigset_t *oset)
-{
-	printf("Not yet supported on parlib!\n");
-	return -1;
-}

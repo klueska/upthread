@@ -8,8 +8,12 @@
 #include <parlib/waitfreelist.h>
 
 #ifdef __cplusplus
-  extern "C" {
+extern "C" {
 #endif
+
+/* Stack stuff. */
+#define UPTHREAD_STACK_PAGES 4
+#define UPTHREAD_STACK_SIZE (UPTHREAD_STACK_PAGES*PGSIZE)
 
 /* Pthread states.  These are mostly examples for other 2LSs */
 #define UPTH_CREATED		1
@@ -41,108 +45,81 @@ struct upthread_tcb {
 typedef struct upthread_tcb* upthread_t;
 STAILQ_HEAD(upthread_queue, upthread_tcb);
 
-#define UPTHREAD_ONCE_INIT 0
-#define UPTHREAD_BARRIER_SERIAL_THREAD 12345
-#define UPTHREAD_MUTEX_INITIALIZER {0,0}
-#define UPTHREAD_MUTEX_NORMAL 0
-#define UPTHREAD_MUTEX_DEFAULT UPTHREAD_MUTEX_NORMAL
-#define UPTHREAD_MUTEX_SPINS 100 // totally arbitrary
-#define UPTHREAD_BARRIER_SPINS 100 // totally arbitrary
-#define UPTHREAD_COND_INITIALIZER {0,{0},{0},0}
-#define UPTHREAD_PROCESS_PRIVATE 0
-
-typedef struct
-{
-  int type;
-} upthread_mutexattr_t;
-
-typedef struct
-{
-  const upthread_mutexattr_t* attr;
-  atomic_t lock;
-} upthread_mutex_t;
-
-/* TODO: MAX_UPTHREADS is arbitrarily defined for now.
- * It indicates the maximum number of threads that can wait on  
-   the same cond var/ barrier concurrently. */
-
-#define MAX_UPTHREADS 32
-typedef struct
-{
-  volatile int sense;
-  int count;
-  int nprocs;
-  upthread_mutex_t pmutex;
-} upthread_barrier_t;
-
-#define WAITER_CLEARED 0
-#define WAITER_WAITING 1
-#define SLOT_FREE 0
-#define SLOT_IN_USE 1
-
-/* Detach state.  */
-enum
-{
-  UPTHREAD_CREATE_JOINABLE,
-#define UPTHREAD_CREATE_JOINABLE	UPTHREAD_CREATE_JOINABLE
-  UPTHREAD_CREATE_DETACHED
-#define UPTHREAD_CREATE_DETACHED	UPTHREAD_CREATE_DETACHED
-};
-
-// TODO: how big do we want these?  ideally, we want to be able to guard and map
-// more space if we go too far.
-#define UPTHREAD_STACK_PAGES 4
-#define UPTHREAD_STACK_SIZE (UPTHREAD_STACK_PAGES*PGSIZE)
-
-typedef struct
-{
-  int pshared;
-} upthread_condattr_t;
-
-
-typedef struct
-{
-  const upthread_condattr_t* attr;
-  uint32_t waiters[MAX_UPTHREADS];
-  uint32_t in_use[MAX_UPTHREADS];
-  uint32_t next_waiter; //start the search for an available waiter at this spot
-} upthread_cond_t;
-typedef struct 
-{
-	size_t stacksize;
-	int detachstate;
-} upthread_attr_t;
-typedef int upthread_barrierattr_t;
-typedef uint32_t upthread_once_t;
-typedef void** upthread_key_t;
-
 /* Akaros upthread extensions / hacks */
 void upthread_can_vcore_request(bool can);	/* default is TRUE */
 void upthread_can_vcore_steal(bool can);	/* default is TRUE */
 void upthread_set_num_vcores(int num, int next);	/* default is 1,0 */
 void upthread_short_circuit_yield(bool ss);	/* default is TRUE */
 
-/* The upthreads API */
+/* The core upthreads API */
+enum {
+  UPTHREAD_CREATE_JOINABLE,
+#define UPTHREAD_CREATE_JOINABLE	UPTHREAD_CREATE_JOINABLE
+  UPTHREAD_CREATE_DETACHED
+#define UPTHREAD_CREATE_DETACHED	UPTHREAD_CREATE_DETACHED
+};
+
+typedef struct {
+	size_t stacksize;
+	int detachstate;
+} upthread_attr_t;
+
 int upthread_attr_init(upthread_attr_t *);
 int upthread_attr_destroy(upthread_attr_t *);
+int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate);
+int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize);
+int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize);
 int upthread_create(upthread_t *, const upthread_attr_t *,
                    void *(*)(void *), void *);
 int upthread_join(upthread_t, void **);
 int upthread_yield(void);
+void upthread_exit(void* ret);
+int upthread_detach(upthread_t __th);
+upthread_t upthread_self();
 
-int upthread_attr_setdetachstate(upthread_attr_t *__attr,int __detachstate);
+void __upthread_generic_yield(struct upthread_tcb *upthread);
 
-int upthread_mutex_destroy(upthread_mutex_t *);
-int upthread_mutex_init(upthread_mutex_t *, const upthread_mutexattr_t *);
-int upthread_mutex_lock(upthread_mutex_t *);
-int upthread_mutex_trylock(upthread_mutex_t *);
-int upthread_mutex_unlock(upthread_mutex_t *);
-int upthread_mutex_destroy(upthread_mutex_t *);
+/* Upthread mutexes */
+enum {
+	UPTHREAD_MUTEX_NORMAL,
+	UPTHREAD_MUTEX_RECURSIVE,
+	NUM_UPTHREAD_MUTEX_TYPES,
+};
+#define UPTHREAD_MUTEX_DEFAULT UPTHREAD_MUTEX_NORMAL
+
+typedef struct upthread_mutexattr {
+	int type;
+} upthread_mutexattr_t;
+
+typedef struct upthread_mutex {
+	upthread_mutexattr_t attr;
+	struct upthread_queue queue;
+	mcs_lock_t lock;
+	mcs_lock_qnode_t *qnode;
+	int locked;
+	upthread_t owner;
+} upthread_mutex_t;
+#define UPTHREAD_MUTEX_INITIALIZER {{0}, {0}, {0}, NULL, 0, NULL}
 
 int upthread_mutexattr_init(upthread_mutexattr_t *);
 int upthread_mutexattr_destroy(upthread_mutexattr_t *);
 int upthread_mutexattr_gettype(const upthread_mutexattr_t *, int *);
 int upthread_mutexattr_settype(upthread_mutexattr_t *, int);
+int upthread_mutex_init(upthread_mutex_t *, const upthread_mutexattr_t *);
+int upthread_mutex_trylock(upthread_mutex_t *);
+int upthread_mutex_lock(upthread_mutex_t *);
+int upthread_mutex_unlock(upthread_mutex_t *);
+int upthread_mutex_destroy(upthread_mutex_t *);
+
+/* Upthread condvars */
+typedef struct upthread_condvar {
+	mcs_lock_t lock;
+	mcs_lock_qnode_t *waiting_qnode;
+	upthread_mutex_t *waiting_mutex;
+	struct upthread_queue queue;
+} upthread_cond_t;
+#define UPTHREAD_CONDVAR_INITIALIZER {{0}, NULL, NULL, {0}}
+typedef void upthread_condattr_t;
 
 int upthread_cond_init(upthread_cond_t *, const upthread_condattr_t *);
 int upthread_cond_destroy(upthread_cond_t *);
@@ -150,41 +127,38 @@ int upthread_cond_broadcast(upthread_cond_t *);
 int upthread_cond_signal(upthread_cond_t *);
 int upthread_cond_wait(upthread_cond_t *, upthread_mutex_t *);
 
-int upthread_condattr_init(upthread_condattr_t *);
-int upthread_condattr_destroy(upthread_condattr_t *);
-int upthread_condattr_setpshared(upthread_condattr_t *, int);
-int upthread_condattr_getpshared(upthread_condattr_t *, int *);
+/* Upthread barriers */
+typedef union {
+	bool val;
+	uint8_t padding[ARCH_CL_SIZE];
+} padded_bool_t;
 
-#define upthread_rwlock_t upthread_mutex_t
-#define upthread_rwlockattr_t upthread_mutexattr_t
-#define upthread_rwlock_destroy upthread_mutex_destroy
-#define upthread_rwlock_init upthread_mutex_init
-#define upthread_rwlock_unlock upthread_mutex_unlock
-#define upthread_rwlock_rdlock upthread_mutex_lock
-#define upthread_rwlock_wrlock upthread_mutex_lock
-#define upthread_rwlock_tryrdlock upthread_mutex_trylock
-#define upthread_rwlock_trywrlock upthread_mutex_trylock
+typedef struct {
+	upthread_t *queue;
+	int len;
+	mcs_lock_t mtx;
+	mcs_lock_qnode_t *qnode;
+	int maxlen;
+} contextq_t;
 
-upthread_t upthread_self();
-int upthread_equal(upthread_t t1, upthread_t t2);
-void upthread_exit(void* ret);
-int upthread_once(upthread_once_t* once_control, void (*init_routine)(void));
+typedef struct upthread_barrier {
+	int N;
+	int arrived;
+	bool wait;
+	padded_bool_t *signals;
+	contextq_t blocked[2];
+} upthread_barrier_t;
+typedef void upthread_barrierattr_t;
 
-int upthread_barrier_init(upthread_barrier_t* b, const upthread_barrierattr_t* a, int count);
+int upthread_barrierattr_init(upthread_barrierattr_t *attr);
+int upthread_barrierattr_destroy(upthread_barrierattr_t *attr);
+int upthread_barrier_init(upthread_barrier_t* b,
+                          const upthread_barrierattr_t* a, int count);
 int upthread_barrier_wait(upthread_barrier_t* b);
 int upthread_barrier_destroy(upthread_barrier_t* b);
 
-//added for redis compile
-int upthread_detach(upthread_t __th);
-int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize);
-int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize);
-
-//added for go compile
-int upthread_kill(upthread_t __threadid, int __signo);
-int upthread_sigmask(int how, const sigset_t *set, sigset_t *oset);
-
 #ifdef __cplusplus
-  }
+}
 #endif
 
 #endif
