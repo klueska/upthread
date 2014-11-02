@@ -83,7 +83,7 @@ static struct upthread_tcb *__upthread_alloc(size_t stacksize)
 	struct upthread_tcb *upthread = stackbot + stacksize
 	                                - sizeof(struct upthread_tcb) - offset;
 	upthread->stacktop = upthread;
-	upthread->stacksize = stacksize;
+	upthread->stacksize = stacksize - sizeof(struct upthread_tcb) - offset;
 	return upthread;
 }
 
