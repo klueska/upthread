@@ -321,6 +321,17 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
  * a uthread representing thread0 (int main()) */
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
+	vcore_lib_init();
+	vc_mgmt = parlib_aligned_alloc(ARCH_CL_SIZE,
+	              sizeof(struct vc_mgmt) * max_vcores());
+	memset(vc_mgmt, 0, sizeof(struct vc_mgmt) * max_vcores());
+	for (int i=0; i < max_vcores(); i++) {
+		STAILQ_INIT(&tqueue(i));
+		spinlock_init(&tqlock(i));
+		tqsize(i) = 0;
+		rseed(i) = i;
+	}
+
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = parlib_aligned_alloc(ARCH_CL_SIZE,
 	                      sizeof(struct upthread_tcb));
