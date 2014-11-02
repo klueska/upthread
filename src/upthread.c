@@ -61,9 +61,33 @@ struct schedule_ops upthread_sched_ops = {
 /* Publish our sched_ops, overriding the weak defaults */
 struct schedule_ops *sched_ops = &upthread_sched_ops;
 
-/* Static helpers */
-static void __upthread_free_stack(struct upthread_tcb *pt);
-static int __upthread_allocate_stack(struct upthread_tcb *pt);
+// Warning, this will reuse numbers eventually
+static int get_next_pid(void)
+{
+	static uint32_t next_pid = 0;
+	return next_pid++;
+}
+
+static struct upthread_tcb *__upthread_alloc(size_t stacksize)
+{
+	void *stackbot = mmap(
+		0, sizeof(struct upthread_tcb) + stacksize,
+		PROT_READ|PROT_WRITE|PROT_EXEC,
+		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0
+	);
+	if (stackbot == MAP_FAILED)
+		abort();
+	struct upthread_tcb *upthread = stackbot + stacksize;
+	upthread->stacktop = upthread;
+	upthread->stacksize = stacksize;
+	return upthread;
+}
+
+static void __upthread_free(struct upthread_tcb *pt)
+{
+	assert(!munmap(pt->stacktop - pt->stacksize,
+	               sizeof(struct upthread_tcb) + pt->stacksize));
+}
 
 static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 {
@@ -282,30 +306,6 @@ int upthread_attr_destroy(upthread_attr_t *a)
 	return 0;
 }
 
-static void __upthread_free_stack(struct upthread_tcb *pt)
-{
-	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
-}
-
-static int __upthread_allocate_stack(struct upthread_tcb *pt)
-{
-	assert(pt->stacksize);
-	void* stackbot = mmap(0, pt->stacksize,
-	                      PROT_READ|PROT_WRITE|PROT_EXEC,
-	                      MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-	if (stackbot == MAP_FAILED)
-		return -1; // errno set by mmap
-	pt->stacktop = stackbot + pt->stacksize;
-	return 0;
-}
-
-// Warning, this will reuse numbers eventually
-static int get_next_pid(void)
-{
-	static uint32_t next_pid = 0;
-	return next_pid++;
-}
-
 int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize)
 {
 	attr->stacksize = stacksize;
@@ -333,10 +333,7 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	}
 
 	/* Create a upthread_tcb for the main thread */
-	upthread_t t = parlib_aligned_alloc(ARCH_CL_SIZE,
-	                      sizeof(struct upthread_tcb));
-	assert(t);
-	memset(t, 0, sizeof(struct upthread_tcb));
+	upthread_t t = __upthread_alloc(0);
 	t->id = get_next_pid();
 	/* Fill in the main context stack info. */
 	void *stackbottom;
@@ -360,40 +357,30 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	 * vcore stacks or TLSs, we'll need to change this. */
 	uthread_lib_init((struct uthread*)t);
 
-	/* Now that we have vcores, initialize the per vcore stuff. */
-	vc_mgmt = parlib_aligned_alloc(ARCH_CL_SIZE,
-	              sizeof(struct vc_mgmt) * max_vcores());
-	for (int i=0; i < max_vcores(); i++) {
-		STAILQ_INIT(&tqueue(i));
-		spinlock_init(&tqlock(i));
-		tqsize(i) = 0;
-        rseed(i) = i;
-	}
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
                    void *(*start_routine)(void *), void *arg)
 {
+	size_t stacksize = UPTHREAD_STACK_SIZE;
+	/* Get the stack size if a different one passed in */
+	if (attr) {
+		if (attr->stacksize) /* don't set a 0 stacksize */
+			stacksize = attr->stacksize;
+	}
+
 	/* Create the actual thread */
 	struct upthread_tcb *upthread;
-	upthread = parlib_aligned_alloc(ARCH_CL_SIZE, sizeof(struct upthread_tcb));
-	assert(upthread);
-	memset(upthread, 0, sizeof(struct upthread_tcb));
-	upthread->stacksize = UPTHREAD_STACK_SIZE;	/* default */
+	upthread = __upthread_alloc(stacksize);
 	upthread->state = UPTH_CREATED;
 	upthread->id = get_next_pid();
 	upthread->detached = FALSE;				/* default */
 	upthread->joiner = 0;
 	/* Respect the attributes */
 	if (attr) {
-		if (attr->stacksize)					/* don't set a 0 stacksize */
-			upthread->stacksize = attr->stacksize;
 		if (attr->detachstate == UPTHREAD_CREATE_DETACHED)
 			upthread->detached = TRUE;
 	}
-	/* allocate a stack */
-	if (__upthread_allocate_stack(upthread))
-		printf("We're fucked\n");
 	/* Set the u_tf to start up in __upthread_run, which will call the real
 	 * start_routine and pass it the arg.  Note those aren't set until later in
 	 * upthread_create(). */
@@ -458,7 +445,7 @@ int upthread_join(struct upthread_tcb *join_target, void **retval)
 	}
 	if (retval)
 		*retval = join_target->retval;
-	free(join_target);
+	__upthread_free(join_target);
 	return 0;
 }
 
@@ -478,11 +465,9 @@ static void __pth_exit_cb(struct uthread *uthread, void *junk)
 	upthread->state = UPTH_EXITING;
 	/* Destroy the upthread */
 	uthread_cleanup(uthread);
-	/* Cleanup, mirroring upthread_create() */
-	__upthread_free_stack(upthread);
 	/* TODO: race on detach state (see join) */
 	if (upthread->detached) {
-		free(upthread);
+		__upthread_free(upthread);
 	} else {
 		/* See if someone is joining on us.  If not, we're done (and the
 		 * joiner will wake itself when it saw us there instead of 0). */
