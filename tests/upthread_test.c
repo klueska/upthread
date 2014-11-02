@@ -21,7 +21,7 @@ upthread_mutex_t lock = UPTHREAD_MUTEX_INITIALIZER;
 #define MAX_NR_TEST_THREADS 100000
 int nr_yield_threads = 100;
 int nr_yield_loops = 100;
-int nr_vcores = 0;
+int nr_vcores = 1;
 int amt_fake_work = 0;
 
 upthread_t my_threads[MAX_NR_TEST_THREADS];
@@ -64,6 +64,8 @@ int main(int argc, char** argv)
 	if (argc > 4)
 		amt_fake_work = strtol(argv[4], 0, 10);
 	nr_yield_threads = MIN(nr_yield_threads, MAX_NR_TEST_THREADS);
+	nr_yield_loops = MAX(nr_yield_loops, 1);
+	nr_vcores = nr_vcores ? nr_vcores : 1;
 	printf("Making %d threads of %d loops each, on %d vcore(s), %d work\n",
 	       nr_yield_threads, nr_yield_loops, nr_vcores, amt_fake_work);
 
@@ -71,7 +73,8 @@ int main(int argc, char** argv)
 	if (nr_vcores) {
 		/* Only do the vcore trickery if requested */
 		upthread_can_vcore_request(FALSE);	/* 2LS won't manage vcores */
-		vcore_request(nr_vcores - 1);		/* ghetto incremental interface */
+		upthread_can_vcore_steal(FALSE);
+		upthread_set_num_vcores(nr_vcores, 0);
 		for (int i = 0; i < nr_vcores; i++) {
 			printf("Vcore %d not mapped to a particular pcore\n", i);
 		}
@@ -82,6 +85,8 @@ int main(int argc, char** argv)
 		printd("[A] About to create thread %d\n", i);
 		assert(!upthread_create(&my_threads[i], NULL, &yield_thread, NULL));
 	}
+
+	vcore_request(nr_vcores - 1);		/* ghetto incremental interface */
 	if (gettimeofday(&start_tv, 0))
 		perror("Start time error...");
 	ready = TRUE;			/* signal to any spinning uthreads to start */
