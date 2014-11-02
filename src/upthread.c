@@ -11,7 +11,6 @@
 #include <parlib/mcs.h>
 #include <parlib/vcore.h>
 #include <parlib/syscall.h>
-#include <parlib/waitfreelist.h>
 #include "upthread.h"
 
 #define printd(...) 
