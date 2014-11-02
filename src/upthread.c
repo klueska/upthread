@@ -20,7 +20,7 @@ struct vc_mgmt {
 	struct upthread_queue tqueue;
 	spinlock_t tqlock;
 	int tqsize;
-    unsigned int rseed;
+	unsigned int rseed;
 } __attribute__((aligned(ARCH_CL_SIZE)));
 struct vc_mgmt *vc_mgmt;
 #define tqueue(i) (vc_mgmt[i].tqueue)
