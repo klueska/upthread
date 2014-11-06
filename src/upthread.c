@@ -205,6 +205,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	/* Try to get a thread.  If we get one, we'll break out and run it.  If not,
 	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
 	 * had a new event come in, one that may make us able to get a new_thread */
+	int spin_count = 100;
 	do {
 		if ((new_thread = __pth_thread_dequeue()))
 			break;
@@ -212,8 +213,9 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
 		/* TODO: you can imagine having something smarter here, like spin for a
 		 * bit before yielding (or not at all if you want to be greedy). */
-		if (can_adjust_vcores)
+		if (can_adjust_vcores && !(spin_count--))
 			vcore_yield(FALSE);
+		handle_events();
 	} while (1);
 	assert(new_thread->state == UPTH_RUNNABLE);
 	run_uthread((struct uthread*)new_thread);
