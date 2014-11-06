@@ -29,7 +29,7 @@ struct vc_mgmt *vc_mgmt;
 
 static bool can_adjust_vcores = TRUE;
 static bool can_steal = TRUE;
-static int nr_vcores = 1;
+static int nr_vcores = 0;
 static bool ss_yield = TRUE;
 
 /* Helper / local functions */
@@ -369,6 +369,7 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 		tqsize(i) = 0;
 		rseed(i) = i;
 	}
+	nr_vcores = max_vcores();
 
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = __upthread_alloc(0);
