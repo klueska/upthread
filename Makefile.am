@@ -12,10 +12,12 @@ LIB_CFILES = \
   @SRCDIR@/mutex.c \
   @SRCDIR@/condvar.c \
   @SRCDIR@/barrier.c \
+  @SRCDIR@/semaphore.c \
   @SRCDIR@/futex.c
 
 LIB_HFILES = \
   @SRCDIR@/upthread.h \
+  @SRCDIR@/semaphore.h \
   @SRCDIR@/futex.h
 
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
