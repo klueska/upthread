@@ -32,12 +32,17 @@ upthread_pvcqincdir = $(includedir)/upthread-pvcq
 dist_upthread_pvcqinc_DATA = $(LIB_HFILES)
 
 # Setup parameters to build the test programs
-check_PROGRAMS = upthread_test
+check_PROGRAMS = upthread_test syscall_test
 
 upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
 upthread_test_CFLAGS = $(AM_CFLAGS)
 upthread_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
 upthread_test_LDADD = -lupthread-pvcq $(LPARLIB)
+
+syscall_test_SOURCES =  @TESTSDIR@/syscall_test.c
+syscall_test_CFLAGS = $(AM_CFLAGS)
+syscall_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
+syscall_test_LDADD = -lupthread-pvcq $(LPARLIB)
 
 ChangeLog:
 	cd $(srcdir); \
