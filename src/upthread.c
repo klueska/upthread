@@ -222,6 +222,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		handle_events();
 	} while (1);
 	assert(new_thread->state == UPTH_RUNNABLE);
+	new_thread->state = UPTH_RUNNING;
 	run_uthread((struct uthread*)new_thread);
 	assert(0);
 }
