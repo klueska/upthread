@@ -171,7 +171,7 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	/* If there isn't one, try and steal one from someone else's queue. This
 	 * assumes nr_vcores is pretty stable across the whole run for high
 	 * performance.  */
-    if (can_steal && !upthread) {
+	if (can_steal && !upthread) {
 		/* First try doing power of two choices. */
 		int choice[2] = { rand_r(&rseed(vcoreid)) % nr_vcores,
 		                  rand_r(&rseed(vcoreid)) % nr_vcores};
@@ -182,7 +182,7 @@ static struct upthread_tcb *__pth_thread_dequeue()
 			upthread = tdequeue(choice[id]);
 
 		/* Fall back to looping through all vcores. This time I go through
- 		 * max_vcores() just to make sure I don't miss anything. */
+		 * max_vcores() just to make sure I don't miss anything. */
 		if (!upthread) {
 			int i = (vcoreid + 1) % max_vcores();
 			while(i != vcoreid) {
@@ -401,7 +401,6 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	 * yet, so if a 2LS somehow wants to have its init stuff use things like
 	 * vcore stacks or TLSs, we'll need to change this. */
 	uthread_lib_init((struct uthread*)t);
-
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
