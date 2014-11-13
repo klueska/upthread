@@ -89,7 +89,15 @@ static void __upthread_free(struct upthread_tcb *pt)
 	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
 }
 
-int get_next_queue_id(struct upthread_tcb *upthread)
+int get_next_queue_id_basic(struct upthread_tcb *upthread)
+{
+	static int next_vcore = 0;
+	int id = next_vcore;
+	next_vcore = (next_vcore + 1) % max_vcores();
+	return id;
+}
+
+int get_next_queue_id_tls_aware(struct upthread_tcb *upthread)
 {
   static const int l1cachesize = 0x8000;
 	static int sid = 0;
