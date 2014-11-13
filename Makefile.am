@@ -2,7 +2,7 @@
 ACLOCAL_AMFLAGS=-I m4
 
 # Set up global variables
-LIBNAME = upthread-pvcq
+LIBNAME = upthread
 CAP_LIBNAME = $(shell echo $(LIBNAME) | sed -e 's/^[a-z]/\U&/g')
 SRCDIR = $(srcdir)/@SRCDIR@
 
@@ -23,15 +23,15 @@ LIB_HFILES = \
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
 
 # Setup parameters to build the library
-lib_LTLIBRARIES = libupthread-pvcq.la
-libupthread_pvcq_la_CFLAGS = $(AM_CFLAGS)
-libupthread_pvcq_la_CFLAGS += -I$(SYSDEPDIR)
-libupthread_pvcq_la_SOURCES = $(LIB_FILES)
-libupthread_pvcq_la_LIBADD = $(LPARLIB)
+lib_LTLIBRARIES = libupthread.la
+libupthread_la_CFLAGS = $(AM_CFLAGS)
+libupthread_la_CFLAGS += -I$(SYSDEPDIR)
+libupthread_la_SOURCES = $(LIB_FILES)
+libupthread_la_LIBADD = $(LPARLIB)
 
 # Setup a directory where all of the include files will be installed
-upthread_pvcqincdir = $(includedir)/upthread-pvcq
-dist_upthread_pvcqinc_DATA = $(LIB_HFILES)
+upthreadincdir = $(includedir)/upthread
+dist_upthreadinc_DATA = $(LIB_HFILES)
 
 # Setup parameters to build the test programs
 check_PROGRAMS = upthread_test syscall_test
@@ -39,12 +39,12 @@ check_PROGRAMS = upthread_test syscall_test
 upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
 upthread_test_CFLAGS = $(AM_CFLAGS)
 upthread_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
-upthread_test_LDADD = -lupthread-pvcq $(LPARLIB)
+upthread_test_LDADD = -lupthread $(LPARLIB)
 
 syscall_test_SOURCES =  @TESTSDIR@/syscall_test.c
 syscall_test_CFLAGS = $(AM_CFLAGS)
 syscall_test_CFLAGS += -I$(SRCDIR) -I$(SYSDEPDIR)
-syscall_test_LDADD = -lupthread-pvcq $(LPARLIB)
+syscall_test_LDADD = -lupthread $(LPARLIB)
 
 ChangeLog:
 	cd $(srcdir); \
@@ -53,7 +53,7 @@ ChangeLog:
 	fi;
 
 uninstall-hook:
-	rm -rf $(upthread_pvcqincdir)
+	rm -rf $(upthreadincdir)
 
 .PHONY: ChangeLog
 
