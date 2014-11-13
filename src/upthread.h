@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 /* Stack stuff. */
-#define UPTHREAD_STACK_PAGES 4
+#define UPTHREAD_STACK_PAGES 1024
 #define UPTHREAD_STACK_SIZE (UPTHREAD_STACK_PAGES*PGSIZE)
 
 /* Pthread states.  These are mostly examples for other 2LSs */
