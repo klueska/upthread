@@ -148,13 +148,17 @@ static struct upthread_tcb *__pth_thread_dequeue()
 {
 	inline struct upthread_tcb *tdequeue(int vcoreid)
 	{
-		struct upthread_tcb *upthread;
-		spinlock_lock(&tqlock(vcoreid));
-		if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
-			STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
-			tqsize(vcoreid)--;
+		struct upthread_tcb *upthread = NULL;
+		if (tqsize(vcoreid)) {
+			spinlock_lock(&tqlock(vcoreid));
+			if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
+				STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
+				tqsize(vcoreid)--;
+			}
+			spinlock_unlock(&tqlock(vcoreid));
 		}
-		spinlock_unlock(&tqlock(vcoreid));
+		if (upthread)
+			upthread->preferred_vcq = vcoreid;
 		return upthread;
 	}
 
