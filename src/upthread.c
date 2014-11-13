@@ -336,7 +336,7 @@ void upthread_can_vcore_steal(bool can)
  * created threads in the per vcore run queues. */
 void upthread_set_num_vcores(int num)
 {
-	nr_vcores = num;
+	nr_vcores = MIN(num, max_vcores());
 }
 
 /* Tells the upthread 2LS to optimize the yield path with a short circuit if
