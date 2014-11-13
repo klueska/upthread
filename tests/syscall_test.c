@@ -10,7 +10,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <assert.h>
-#include <upthread/upthread.h>
+#include "upthread.h"
 
 const char filename[] = "emergency.dat";
 const char str[] = "This is a test of the emergency broadcast system.  This is only a test";
