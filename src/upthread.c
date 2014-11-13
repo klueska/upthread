@@ -228,6 +228,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		if (can_adjust_vcores && !(spin_count--))
 			vcore_yield(FALSE);
 		handle_events();
+		cpu_relax();
 	} while (1);
 	assert(new_thread->state == UPTH_RUNNABLE);
 	new_thread->state = UPTH_RUNNING;
