@@ -138,18 +138,21 @@ int get_next_queue_id_tls_aware(struct upthread_tcb *upthread)
 	return sid;
 }
 
-static void __pth_thread_enqueue(struct upthread_tcb *upthread)
+static int __pth_thread_enqueue(struct upthread_tcb *upthread)
 {
-	int vcoreid = vcore_id();
 	int state = upthread->state;
 	upthread->state = UPTH_RUNNABLE;
 
 	if (state == UPTH_CREATED)
-		vcoreid = get_next_queue_id(upthread);
+		upthread->preferred_vcq = get_next_queue_id_basic(upthread);
+
+	int vcoreid = upthread->preferred_vcq;
 	spinlock_lock(&tqlock(vcoreid));
 	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
 	tqsize(vcoreid)++;
 	spinlock_unlock(&tqlock(vcoreid));
+
+	return vcoreid;
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
@@ -246,12 +249,13 @@ static void __upthread_run(void)
 void pth_thread_runnable(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	int state = upthread->state;
 	/* At this point, the 2LS can see why the thread blocked and was woken up in
 	 * the first place (coupling these things together).  On the yield path, the
 	 * 2LS was involved and was able to set the state.  Now when we get the
 	 * thread back, we can take a look. */
 	printd("upthread %08p runnable, state was %d\n", upthread, upthread->state);
-	switch (upthread->state) {
+	switch (state) {
 		case (UPTH_CREATED):
 		case (UPTH_BLK_YIELDING):
 		case (UPTH_BLK_JOINING):
@@ -265,11 +269,12 @@ void pth_thread_runnable(struct uthread *uthread)
 	}
 	/* Insert the newly created thread into the ready queue of threads.
 	 * It will be removed from this queue later when vcore_entry() comes up */
-	__pth_thread_enqueue(upthread);
+	int qid = __pth_thread_enqueue(upthread);
+
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
-	if (can_adjust_vcores)
-		vcore_request(1);
+	if (state == UPTH_CREATED || can_adjust_vcores)
+		vcore_request_specific(qid);
 }
 
 /* For some reason not under its control, the uthread stopped running (compared
