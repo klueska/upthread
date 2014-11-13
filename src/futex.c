@@ -62,19 +62,21 @@ static void __futex_block(struct uthread *uthread, void *arg) {
   struct futex_element *e = arg;
   bool block = true;
 
+  __upthread_generic_yield(upthread);
   spinlock_lock(&e->list->lock);
     if (*e->list->uaddr == e->val) {
       e->upthread = upthread;
-	  __upthread_generic_yield(upthread);
-	  upthread->state = UPTH_BLK_MUTEX;
+      upthread->state = UPTH_BLK_MUTEX;
       STAILQ_INSERT_TAIL(&e->list->tailq, e, next);
     } else {
       block = false;
     }
   spinlock_unlock(&e->list->lock);
 
-  if (!block)
+  if (!block) {
+    upthread->state = UPTH_BLK_PAUSED;
     uthread_runnable(uthread);
+  }
 }
 
 int futex_wait(int *uaddr, int val)
