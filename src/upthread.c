@@ -91,7 +91,7 @@ static void __upthread_free(struct upthread_tcb *pt)
 
 int get_next_queue_id_basic(struct upthread_tcb *upthread)
 {
-	static int next_vcore = 0;
+	static int next_vcore = 1;
 	int id = next_vcore;
 	next_vcore = (next_vcore + 1) % max_vcores();
 	return id;
