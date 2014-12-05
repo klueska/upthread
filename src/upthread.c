@@ -138,7 +138,7 @@ int get_next_queue_id_tls_aware(struct upthread_tcb *upthread)
 	return sid;
 }
 
-static int __pth_thread_enqueue(struct upthread_tcb *upthread)
+static int __pth_thread_enqueue(struct upthread_tcb *upthread, bool athead)
 {
 	int state = upthread->state;
 	upthread->state = UPTH_RUNNABLE;
@@ -148,7 +148,10 @@ static int __pth_thread_enqueue(struct upthread_tcb *upthread)
 
 	int vcoreid = upthread->preferred_vcq;
 	spinlock_lock(&tqlock(vcoreid));
-	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
+	if (athead)
+		STAILQ_INSERT_HEAD(&tqueue(vcoreid), upthread, next);
+	else
+		STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
 	tqsize(vcoreid)++;
 	spinlock_unlock(&tqlock(vcoreid));
 
@@ -250,26 +253,26 @@ void pth_thread_runnable(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
 	int state = upthread->state;
+	int qid = 0;
 	/* At this point, the 2LS can see why the thread blocked and was woken up in
 	 * the first place (coupling these things together).  On the yield path, the
 	 * 2LS was involved and was able to set the state.  Now when we get the
 	 * thread back, we can take a look. */
 	printd("upthread %08p runnable, state was %d\n", upthread, upthread->state);
 	switch (state) {
+		case (UPTH_BLK_SYSC):
+			qid = __pth_thread_enqueue(upthread, true);
+			break;
 		case (UPTH_CREATED):
 		case (UPTH_BLK_YIELDING):
 		case (UPTH_BLK_JOINING):
-		case (UPTH_BLK_SYSC):
 		case (UPTH_BLK_PAUSED):
 		case (UPTH_BLK_MUTEX):
-			/* can do whatever for each of these cases */
+			qid = __pth_thread_enqueue(upthread, false);
 			break;
 		default:
 			printf("Odd state %d for upthread %p\n", upthread->state, upthread);
 	}
-	/* Insert the newly created thread into the ready queue of threads.
-	 * It will be removed from this queue later when vcore_entry() comes up */
-	int qid = __pth_thread_enqueue(upthread);
 
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
