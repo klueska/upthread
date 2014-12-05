@@ -46,8 +46,8 @@ int upthread_mutex_init(upthread_mutex_t* mutex,
 
 	/* Do initialization. */
 	STAILQ_INIT(&mutex->queue);
-	mcs_lock_init(&mutex->lock);
-	mutex->qnode = NULL;
+	spin_pdr_init(&mutex->lock);
+	//mutex->qnode = NULL;
 	mutex->locked = 0;
 	mutex->owner = NULL;
 	return 0;
@@ -62,7 +62,7 @@ static void block(struct uthread *uthread, void *arg)
 	__upthread_generic_yield(upthread);
 	upthread->state = UPTH_BLK_MUTEX;
 	STAILQ_INSERT_TAIL(&mutex->queue, upthread, next);
-	mcs_lock_unlock(&mutex->lock, mutex->qnode);
+	spin_pdr_unlock(&mutex->lock);
 }
 
 int upthread_mutex_trylock(upthread_mutex_t* mutex)
@@ -71,8 +71,7 @@ int upthread_mutex_trylock(upthread_mutex_t* mutex)
 		return EINVAL;
 
 	int retval = 0;
-	mcs_lock_qnode_t qnode = {0};
-	mcs_lock_lock(&mutex->lock, &qnode);
+	spin_pdr_lock(&mutex->lock);
 	if(mutex->attr.type == UPTHREAD_MUTEX_RECURSIVE &&
 		mutex->owner == upthread_self()) {
 		mutex->locked++;
@@ -84,7 +83,7 @@ int upthread_mutex_trylock(upthread_mutex_t* mutex)
 		mutex->owner = upthread_self();
 		mutex->locked++;
 	}
-	mcs_lock_unlock(&mutex->lock, &qnode);
+	spin_pdr_unlock(&mutex->lock);
 	return retval;
 }
 
@@ -93,24 +92,21 @@ int upthread_mutex_lock(upthread_mutex_t* mutex)
 	if(mutex == NULL)
 		return EINVAL;
 
-	mcs_lock_qnode_t qnode = {0};
-	mcs_lock_lock(&mutex->lock, &qnode);
+	spin_pdr_lock(&mutex->lock);
 	if(mutex->attr.type == UPTHREAD_MUTEX_RECURSIVE &&
 		mutex->owner == upthread_self()) {
 		mutex->locked++;
 	}
 	else {
 		while(mutex->locked) {
-			mutex->qnode = &qnode;
 			uthread_yield(true, block, mutex);
 
-			memset(&qnode, 0, sizeof(mcs_lock_qnode_t));
-			mcs_lock_lock(&mutex->lock, &qnode);
+			spin_pdr_lock(&mutex->lock);
 		}
 		mutex->owner = upthread_self();
 		mutex->locked++;
 	}
-	mcs_lock_unlock(&mutex->lock, &qnode);
+	spin_pdr_unlock(&mutex->lock);
 	return 0;
 }
 
@@ -119,22 +115,21 @@ int upthread_mutex_unlock(upthread_mutex_t* mutex)
 	if(mutex == NULL)
 		return EINVAL;
 
-	mcs_lock_qnode_t qnode = {0};
-	mcs_lock_lock(&mutex->lock, &qnode);
+	spin_pdr_lock(&mutex->lock);
 	mutex->locked--;
 	if(mutex->locked == 0) {
 		upthread_t upthread = STAILQ_FIRST(&mutex->queue);
 		if(upthread)
 			STAILQ_REMOVE_HEAD(&mutex->queue, next);
 		mutex->owner = NULL;
-		mcs_lock_unlock(&mutex->lock, &qnode);
+		spin_pdr_unlock(&mutex->lock);
 
 		if(upthread != NULL) {
 			uthread_runnable((struct uthread*)upthread);
 		}
 	}
 	else {
-		mcs_lock_unlock(&mutex->lock, &qnode);
+		spin_pdr_unlock(&mutex->lock);
 	}
 	return 0;
 }

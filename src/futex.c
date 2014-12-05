@@ -21,12 +21,12 @@ STAILQ_HEAD(futex_tailq, futex_element);
 struct futex_list {
   struct futex_tailq tailq;
   int *uaddr;
-  spinlock_t lock;
+  spin_pdr_lock_t lock;
 };
 
 /* A list of futex blocking queues, one per uaddr. */
 struct wfl futex_lists = WFL_INITIALIZER(futex_lists);
-spinlock_t futex_lists_lock = SPINLOCK_INITIALIZER;
+spin_pdr_lock_t futex_lists_lock = SPINLOCK_INITIALIZER;
 
 /* Find or create the blocking queue that corresponds to the uaddr. */
 static struct futex_list *get_futex_list(int *uaddr)
@@ -37,7 +37,7 @@ static struct futex_list *get_futex_list(int *uaddr)
       return list;
   }
 
-  spinlock_lock(&futex_lists_lock);
+  spin_pdr_lock(&futex_lists_lock);
     wfl_foreach_unsafe(list, &futex_lists) {
       if (list->uaddr == uaddr)
         break;
@@ -48,10 +48,10 @@ static struct futex_list *get_futex_list(int *uaddr)
         abort();
       STAILQ_INIT(&list->tailq);
       list->uaddr = uaddr;
-      spinlock_init(&list->lock);
+      spin_pdr_init(&list->lock);
       wfl_insert(&futex_lists, list);
     }
-  spinlock_unlock(&futex_lists_lock);
+  spin_pdr_unlock(&futex_lists_lock);
 
   return list;
 }
@@ -63,7 +63,7 @@ static void __futex_block(struct uthread *uthread, void *arg) {
   bool block = true;
 
   __upthread_generic_yield(upthread);
-  spinlock_lock(&e->list->lock);
+  spin_pdr_lock(&e->list->lock);
     if (*e->list->uaddr == e->val) {
       e->upthread = upthread;
       upthread->state = UPTH_BLK_MUTEX;
@@ -71,7 +71,7 @@ static void __futex_block(struct uthread *uthread, void *arg) {
     } else {
       block = false;
     }
-  spinlock_unlock(&e->list->lock);
+  spin_pdr_unlock(&e->list->lock);
 
   if (!block) {
     upthread->state = UPTH_BLK_PAUSED;
@@ -93,11 +93,11 @@ int futex_wait(int *uaddr, int val)
 int futex_wake_one(int *uaddr)
 {
   struct futex_list *list = get_futex_list(uaddr);
-  spinlock_lock(&list->lock);
+  spin_pdr_lock(&list->lock);
     struct futex_element *e = STAILQ_FIRST(&list->tailq);
     if (e != NULL)
       STAILQ_REMOVE_HEAD(&list->tailq, next);
-  spinlock_unlock(&list->lock);
+  spin_pdr_unlock(&list->lock);
 
   if (e != NULL) {
     uthread_runnable((struct uthread*)e->upthread);
@@ -122,10 +122,10 @@ int futex_wake_all(int *uaddr)
 {
   struct futex_list *list = get_futex_list(uaddr);
 
-  spinlock_lock(&list->lock);
+  spin_pdr_lock(&list->lock);
     struct futex_tailq q = list->tailq;
     STAILQ_INIT(&list->tailq);
-  spinlock_unlock(&list->lock);
+  spin_pdr_unlock(&list->lock);
 
   return unblock_futex_queue(&q);
 }
@@ -136,13 +136,13 @@ int futex_wake_some(int *uaddr, int count)
   struct futex_list *list = get_futex_list(uaddr);
   struct futex_element *e;
 
-  spinlock_lock(&list->lock);
+  spin_pdr_lock(&list->lock);
     /* Remove up to count entries from the queue, and remeber them locally. */
     while (count-- > 0 && (e = STAILQ_FIRST(&list->tailq)) != NULL) {
       STAILQ_REMOVE_HEAD(&list->tailq, next);
       STAILQ_INSERT_TAIL(&q, e, next);
     }
-  spinlock_unlock(&list->lock);
+  spin_pdr_unlock(&list->lock);
 
   return unblock_futex_queue(&q);
 }

@@ -5,6 +5,7 @@
 #include <parlib/vcore.h>
 #include <parlib/uthread.h>
 #include <parlib/mcs.h>
+#include <parlib/spinlock.h>
 #include <parlib/waitfreelist.h>
 
 #ifdef __cplusplus
@@ -95,8 +96,7 @@ typedef struct upthread_mutexattr {
 typedef struct upthread_mutex {
 	upthread_mutexattr_t attr;
 	struct upthread_queue queue;
-	mcs_lock_t lock;
-	mcs_lock_qnode_t *qnode;
+	spin_pdr_lock_t lock;
 	int locked;
 	upthread_t owner;
 } upthread_mutex_t;

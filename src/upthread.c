@@ -8,7 +8,6 @@
 #include <parlib/parlib.h>
 #include <parlib/atomic.h>
 #include <parlib/arch.h>
-#include <parlib/mcs.h>
 #include <parlib/vcore.h>
 #include "upthread.h"
 
@@ -17,7 +16,7 @@
 
 struct vc_mgmt {
 	struct upthread_queue tqueue;
-	spinlock_t tqlock;
+	spin_pdr_lock_t tqlock;
 	int tqsize;
 	unsigned int rseed;
 } __attribute__((aligned(ARCH_CL_SIZE)));
@@ -27,8 +26,10 @@ struct vc_mgmt *vc_mgmt;
 #define tqsize(i) (vc_mgmt[i].tqsize)
 #define rseed(i)  (vc_mgmt[i].rseed)
 
-static bool can_adjust_vcores = TRUE;
+//static bool can_adjust_vcores = FALSE;//TRUE;
+//static bool can_steal = TRUE;
 static bool can_steal = TRUE;
+static bool can_adjust_vcores = TRUE;
 static int nr_vcores = 0;
 static bool ss_yield = TRUE;
 
@@ -147,13 +148,13 @@ static int __pth_thread_enqueue(struct upthread_tcb *upthread, bool athead)
 		upthread->preferred_vcq = get_next_queue_id_basic(upthread);
 
 	int vcoreid = upthread->preferred_vcq;
-	spinlock_lock(&tqlock(vcoreid));
+	spin_pdr_lock(&tqlock(vcoreid));
 	if (athead)
 		STAILQ_INSERT_HEAD(&tqueue(vcoreid), upthread, next);
 	else
 		STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
 	tqsize(vcoreid)++;
-	spinlock_unlock(&tqlock(vcoreid));
+	spin_pdr_unlock(&tqlock(vcoreid));
 
 	return vcoreid;
 }
@@ -164,12 +165,12 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	{
 		struct upthread_tcb *upthread = NULL;
 		if (tqsize(vcoreid)) {
-			spinlock_lock(&tqlock(vcoreid));
+			spin_pdr_lock(&tqlock(vcoreid));
 			if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
 				STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
 				tqsize(vcoreid)--;
 			}
-			spinlock_unlock(&tqlock(vcoreid));
+			spin_pdr_unlock(&tqlock(vcoreid));
 		}
 		if (upthread)
 			upthread->preferred_vcq = vcoreid;
@@ -389,7 +390,7 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	              sizeof(struct vc_mgmt) * max_vcores());
 	for (int i=0; i < max_vcores(); i++) {
 		STAILQ_INIT(&tqueue(i));
-		spinlock_init(&tqlock(i));
+		spin_pdr_init(&tqlock(i));
 		tqsize(i) = 0;
 		rseed(i) = i;
 	}
