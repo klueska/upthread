@@ -189,8 +189,8 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	 * performance.  */
 	if (can_steal && !upthread) {
 		/* First try doing power of two choices. */
-		int choice[2] = { rand_r(&rseed(vcoreid)) % nr_vcores,
-		                  rand_r(&rseed(vcoreid)) % nr_vcores};
+		int choice[2] = { rand_r(&rseed(vcoreid)) % num_vcores(),
+		                  rand_r(&rseed(vcoreid)) % num_vcores()};
 		int size[2] = { tqsize(choice[0]),
 		                tqsize(choice[1])};
 		int id = (size[0] > size[1]) ? 0 : 1;
