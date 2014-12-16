@@ -174,7 +174,7 @@ static struct upthread_tcb *__pth_thread_dequeue()
 			spin_pdr_unlock(&tqlock(vcoreid));
 		}
 		if (upthread)
-			upthread->preferred_vcq = vcoreid;
+			upthread->preferred_vcq = vcore_id();
 		return upthread;
 	}
 
