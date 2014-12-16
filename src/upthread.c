@@ -595,6 +595,7 @@ upthread_t upthread_self()
 static void pth_blockon_syscall(struct uthread* uthread, void *sysc)
 {
   struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+  __upthread_generic_yield(upthread);
   upthread->state = UPTH_BLK_SYSC;
 
   /* Set things up so we can wake this thread up later */
