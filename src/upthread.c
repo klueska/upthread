@@ -188,21 +188,42 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	 * assumes nr_vcores is pretty stable across the whole run for high
 	 * performance.  */
 	if (can_steal && !upthread) {
+
+		/* Steal up to num_threads/nr_vcores threads and return the first */
+		struct upthread_tcb *steal_threads(int vcoreid)
+		{
+			struct upthread_tcb *upthread = NULL;
+			int num_to_steal = num_threads / num_vcores();
+			if (num_to_steal && (tqsize(vcoreid) > num_to_steal)) {
+				upthread = tdequeue(vcoreid);
+				if (upthread) {
+					for (int i=1; i<num_to_steal; i++) {
+						struct upthread_tcb *u = tdequeue(vcoreid);
+						if (u) __pth_thread_enqueue(u, false);
+						else break;
+					}
+				}
+			}
+			return upthread;
+		}
+
 		/* First try doing power of two choices. */
 		int choice[2] = { rand_r(&rseed(vcoreid)) % num_vcores(),
 		                  rand_r(&rseed(vcoreid)) % num_vcores()};
 		int size[2] = { tqsize(choice[0]),
 		                tqsize(choice[1])};
 		int id = (size[0] > size[1]) ? 0 : 1;
-		if (tqsize(choice[id]) > 0)
-			upthread = tdequeue(choice[id]);
+		if (vcoreid != choice[id])
+			upthread = steal_threads(choice[id]);
+		else
+			upthread = steal_threads(choice[!id]);
 
 		/* Fall back to looping through all vcores. This time I go through
 		 * max_vcores() just to make sure I don't miss anything. */
 		if (!upthread) {
 			int i = (vcoreid + 1) % max_vcores();
 			while(i != vcoreid) {
-				upthread = tdequeue(i);
+				upthread = steal_threads(i);
 				if (upthread) break;
 				i = (i + 1) % max_vcores();
 			}
