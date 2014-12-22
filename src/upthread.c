@@ -316,7 +316,6 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 static void __upthread_run(void)
 {
 	struct upthread_tcb *me = upthread_self();
-	uthread_enable_interrupts();
 	upthread_exit(me->start_routine(me->arg));
 }
 
@@ -491,11 +490,6 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	 * yet, so if a 2LS somehow wants to have its init stuff use things like
 	 * vcore stacks or TLSs, we'll need to change this. */
 	uthread_lib_init((struct uthread*)t);
-
-	/* Now that we've returned from the init call, we are on vcore 0 and are
-	 * running, so let's enable interrupts */
-	t->state = UPTH_RUNNING;
-	uthread_enable_interrupts();
 }
 
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
@@ -529,10 +523,8 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 	upthread->start_routine = start_routine;
 	upthread->arg = arg;
 	/* Initialize the uthread */
-	uthread_interrupt_safe(
-		uthread_init((struct uthread*)upthread);
-		uthread_runnable((struct uthread*)upthread);
-	)
+	uthread_init((struct uthread*)upthread);
+	uthread_runnable((struct uthread*)upthread);
 	*thread = upthread;
 	return 0;
 }
@@ -579,10 +571,8 @@ int upthread_join(struct upthread_tcb *join_target, void **retval)
 	/* See if it is already done, to avoid the pain of a uthread_yield() (the
 	 * early check is an optimization, pth_thread_yield() handles the race). */
 	if (!join_target->joiner) {
-		uthread_interrupt_safe(
-			uthread_yield(TRUE, __pth_join_cb, join_target);
-			/* When we return/restart, the thread will be done */
-		)
+		uthread_yield(TRUE, __pth_join_cb, join_target);
+		/* When we return/restart, the thread will be done */
 	} else {
 		assert(join_target->joiner == join_target);	/* sanity check */
 	}
@@ -628,9 +618,7 @@ void upthread_exit(void *ret)
 {
 	struct upthread_tcb *upthread = upthread_self();
 	upthread->retval = ret;
-	uthread_interrupt_safe(
-		uthread_yield(FALSE, __pth_exit_cb, 0);
-	)
+	uthread_yield(FALSE, __pth_exit_cb, 0);
 }
 
 /* Callback/bottom half of yield.  For those writing these pth callbacks, the
@@ -652,9 +640,7 @@ int upthread_yield(void)
 	if (ss_yield && !tqsize(vcore_id()))
 		return 0;
 	/* Do the actual yield */
-	uthread_interrupt_safe(
-		uthread_yield(TRUE, __pth_yield_cb, 0);
-	)
+	uthread_yield(TRUE, __pth_yield_cb, 0);
 	return 1;
 }
 

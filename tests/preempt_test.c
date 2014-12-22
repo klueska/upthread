@@ -12,9 +12,7 @@
 
 #define printd(...) \
 { \
-	upthread_disable_interrupts(); \
 	printf(__VA_ARGS__); \
-	upthread_enable_interrupts(); \
 }
 
 #define MAX_NR_TEST_THREADS 100000
