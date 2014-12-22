@@ -20,7 +20,7 @@
 
 struct vc_mgmt {
 	struct upthread_queue tqueue;
-	spinlock_t tqlock;
+	spin_pdr_lock_t tqlock;
 	int tqsize;
 	unsigned int rseed;
 } __attribute__((aligned(ARCH_CL_SIZE)));
@@ -142,10 +142,10 @@ static void __pth_thread_enqueue(struct upthread_tcb *upthread)
 
 	if (state == UPTH_CREATED)
 		vcoreid = get_next_queue_id(upthread);
-	spinlock_lock(&tqlock(vcoreid));
+	spin_pdr_lock(&tqlock(vcoreid));
 	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
 	tqsize(vcoreid)++;
-	spinlock_unlock(&tqlock(vcoreid));
+	spin_pdr_unlock(&tqlock(vcoreid));
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
@@ -153,12 +153,12 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	inline struct upthread_tcb *tdequeue(int vcoreid)
 	{
 		struct upthread_tcb *upthread;
-		spinlock_lock(&tqlock(vcoreid));
+		spin_pdr_lock(&tqlock(vcoreid));
 		if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
 			STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
 			tqsize(vcoreid)--;
 		}
-		spinlock_unlock(&tqlock(vcoreid));
+		spin_pdr_unlock(&tqlock(vcoreid));
 		return upthread;
 	}
 
@@ -229,16 +229,6 @@ int upthread_set_sched_period(uint64_t us)
 	__preempt_period = us;
 	upthread_yield();
 	return 0;
-}
-
-void upthread_disable_interrupts()
-{
-	uthread_disable_interrupts();
-}
-
-void upthread_enable_interrupts()
-{
-	uthread_enable_interrupts();
 }
 
 static struct alarm_data *__new_alarm_data()
@@ -456,7 +446,7 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	              sizeof(struct vc_mgmt) * max_vcores());
 	for (int i=0; i < max_vcores(); i++) {
 		STAILQ_INIT(&tqueue(i));
-		spinlock_init(&tqlock(i));
+		spin_pdr_init(&tqlock(i));
 		tqsize(i) = 0;
 		rseed(i) = i;
 	}

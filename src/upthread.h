@@ -50,8 +50,6 @@ void upthread_can_vcore_steal(bool can);	/* default is TRUE */
 void upthread_set_num_vcores(int num);	/* default is 1 */
 void upthread_short_circuit_yield(bool ss);	/* default is TRUE */
 int upthread_set_sched_period(uint64_t us);
-void upthread_disable_interrupts();
-void upthread_enable_interrupts();
 
 /* The core upthreads API */
 enum {
