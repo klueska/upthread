@@ -19,7 +19,7 @@
 
 #define MAX_NR_TEST_THREADS 100000
 int nr_threads = 1000;
-int nr_vcores = 0;
+int nr_vcores = 24;
 int amt_fake_work = 0;
 
 upthread_t my_threads[MAX_NR_TEST_THREADS];
@@ -37,7 +37,7 @@ void *worker_thread(void* arg)
 		cpu_relax();
 
 	while(1) {
-		if ((nr_loops++ % 1000000000LL) == 0)
+		if ((nr_loops++ % 100000000LL) == 0)
 			printd("Looping on thread: %d, vcore: %d, c: %lld\n", id, vcore_id(), nr_loops);
 	}
 	return NULL;
@@ -50,6 +50,7 @@ int main(int argc, char** argv)
 	if (nr_vcores) {
 		/* Only do the vcore trickery if requested */
 		upthread_can_vcore_request(FALSE);	/* 2LS won't manage vcores */
+		upthread_set_num_vcores(nr_vcores);
 		vcore_request(nr_vcores - 1);		/* ghetto incremental interface */
 		for (int i = 0; i < nr_vcores; i++) {
 			printd("Vcore %d not mapped to a particular pcore\n", i);
