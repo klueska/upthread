@@ -10,7 +10,6 @@
 #include <parlib/arch.h>
 #include <parlib/mcs.h>
 #include <parlib/vcore.h>
-#include <parlib/syscall.h>
 #include "upthread.h"
 
 #define printd(...) 
@@ -93,6 +92,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		 * bit before yielding (or not at all if you want to be greedy). */
 		if (can_adjust_vcores)
 			vcore_yield(FALSE);
+		handle_events();
 	} while (1);
 	assert(new_thread->state == UPTH_RUNNABLE);
 	run_uthread((struct uthread*)new_thread);
