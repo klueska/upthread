@@ -10,7 +10,6 @@
 #include <parlib/arch.h>
 #include <parlib/mcs.h>
 #include <parlib/vcore.h>
-#include <parlib/syscall.h>
 #include <parlib/alarm.h>
 #include "upthread.h"
 
