@@ -6,11 +6,9 @@
 #include <sys/queue.h>
 #include <sys/mman.h>
 #include <parlib/parlib.h>
-#include <parlib/vcore.h>
 #include <parlib/atomic.h>
 #include <parlib/arch.h>
 #include <parlib/mcs.h>
-#include <parlib/dtls.h>
 #include <parlib/vcore.h>
 #include <parlib/syscall.h>
 #include <parlib/alarm.h>
@@ -21,18 +19,27 @@
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
 
-static struct upthread_queue ready_queue = TAILQ_HEAD_INITIALIZER(ready_queue);
-static struct upthread_queue active_queue = TAILQ_HEAD_INITIALIZER(active_queue);
-static struct mcs_lock queue_lock;
-static int threads_ready = 0;
-static int threads_active = 0;
+struct vc_mgmt {
+	struct upthread_queue tqueue;
+	spinlock_t tqlock;
+	int tqsize;
+	unsigned int rseed;
+} __attribute__((aligned(ARCH_CL_SIZE)));
+struct vc_mgmt *vc_mgmt;
+#define tqueue(i) (vc_mgmt[i].tqueue)
+#define tqlock(i) (vc_mgmt[i].tqlock)
+#define tqsize(i) (vc_mgmt[i].tqsize)
+#define rseed(i)  (vc_mgmt[i].rseed)
+
 static bool can_adjust_vcores = TRUE;
+static bool can_steal = TRUE;
+static int nr_vcores = 1;
+static bool ss_yield = TRUE;
 static uint64_t __preempt_period = DEFAULT_PREEMPT_PERIOD;
 static __thread uint64_t last_preempt_period = DEFAULT_PREEMPT_PERIOD;
 
 /* Helper / local functions */
 static int get_next_pid(void);
-static inline void spin_to_sleep(unsigned int spins, unsigned int *spun);
 
 /* Linux Specific! (handle async syscall events) */
 static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type);
@@ -57,9 +64,137 @@ struct schedule_ops upthread_sched_ops = {
 /* Publish our sched_ops, overriding the weak defaults */
 struct schedule_ops *sched_ops = &upthread_sched_ops;
 
-/* Static helpers */
-static void __upthread_free_stack(struct upthread_tcb *pt);
-static int __upthread_allocate_stack(struct upthread_tcb *pt);
+// Warning, this will reuse numbers eventually
+static int get_next_pid(void)
+{
+	static uint32_t next_pid = 0;
+	return next_pid++;
+}
+
+static struct upthread_tcb *__upthread_alloc(size_t stacksize)
+{
+	int offset = rand_r(&rseed(0)) % max_vcores() * ARCH_CL_SIZE;
+	stacksize += sizeof(struct upthread_tcb) + offset;
+	stacksize = ROUNDUP(stacksize, PGSIZE);
+	void *stackbot = mmap(
+		0, stacksize, PROT_READ|PROT_WRITE|PROT_EXEC,
+		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0
+	);
+	if (stackbot == MAP_FAILED)
+		abort();
+	struct upthread_tcb *upthread = stackbot + stacksize
+	                                - sizeof(struct upthread_tcb) - offset;
+	upthread->stacktop = upthread;
+	upthread->stacksize = stacksize - sizeof(struct upthread_tcb) - offset;
+	return upthread;
+}
+
+static void __upthread_free(struct upthread_tcb *pt)
+{
+	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
+}
+
+int get_next_queue_id(struct upthread_tcb *upthread)
+{
+  static const int l1cachesize = 0x8000;
+	static int sid = 0;
+	static int cid = 0;
+	int vcoreid = vcore_id();
+	int hvc = max_vcores()/2;
+	long utls = (long)upthread->uthread.tls_desc % l1cachesize;
+	for (int i=0; (i < nr_vcores) && (i < hvc); i++) {
+		int j = i + hvc;
+		int tqsizei = i != vcoreid ? tqsize(i) : tqsize(i) + 1;
+		int tqsizecid = cid != vcoreid ? tqsize(cid) : tqsize(cid) + 1;
+		int tqsizesid = sid != vcoreid ? tqsize(sid) : tqsize(sid) + 1;
+		long pvtls = (long)vcore_tls_descs(i) % l1cachesize;
+		if (j < nr_vcores) {
+			int tqsizej = j != vcoreid ? tqsize(j) : tqsize(j) + 1;
+			long svtls = (long)vcore_tls_descs(j) % l1cachesize;
+			if ((utls != pvtls) && (utls != svtls)) {
+				if (tqsizei < tqsizecid)
+					cid = i;
+				else if (tqsizej < tqsizecid)
+					cid = j;
+			}
+			if (tqsizei < tqsizesid)
+				sid = i;
+			else if (tqsizej < tqsizesid)
+				sid = j;
+		} else {
+			if (utls != pvtls) {
+				if (tqsizei < tqsizecid)
+					cid = i;
+			}
+			if (tqsizei < tqsizesid)
+				sid = i;
+		}
+	}
+	if (tqsize(cid) <= tqsize(sid))
+		return cid;
+	return sid;
+}
+
+static void __pth_thread_enqueue(struct upthread_tcb *upthread)
+{
+	int vcoreid = vcore_id();
+	int state = upthread->state;
+	upthread->state = UPTH_RUNNABLE;
+
+	if (state == UPTH_CREATED)
+		vcoreid = get_next_queue_id(upthread);
+	spinlock_lock(&tqlock(vcoreid));
+	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
+	tqsize(vcoreid)++;
+	spinlock_unlock(&tqlock(vcoreid));
+}
+
+static struct upthread_tcb *__pth_thread_dequeue()
+{
+	inline struct upthread_tcb *tdequeue(int vcoreid)
+	{
+		struct upthread_tcb *upthread;
+		spinlock_lock(&tqlock(vcoreid));
+		if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
+			STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
+			tqsize(vcoreid)--;
+		}
+		spinlock_unlock(&tqlock(vcoreid));
+		return upthread;
+	}
+
+	int vcoreid = vcore_id();
+	struct upthread_tcb *upthread;
+
+	/* Try and grab a thread from our queue */
+	upthread = tdequeue(vcoreid);
+
+	/* If there isn't one, try and steal one from someone else's queue. This
+	 * assumes nr_vcores is pretty stable across the whole run for high
+	 * performance.  */
+    if (can_steal && !upthread) {
+		/* First try doing power of two choices. */
+		int choice[2] = { rand_r(&rseed(vcoreid)) % nr_vcores,
+		                  rand_r(&rseed(vcoreid)) % nr_vcores};
+		int size[2] = { tqsize(choice[0]),
+		                tqsize(choice[1])};
+		int id = (size[0] > size[1]) ? 0 : 1;
+		if (tqsize(choice[id]) > 0)
+			upthread = tdequeue(choice[id]);
+
+		/* Fall back to looping through all vcores. This time I go through
+ 		 * max_vcores() just to make sure I don't miss anything. */
+		if (!upthread) {
+			int i = (vcoreid + 1) % max_vcores();
+			while(i != vcoreid) {
+				upthread = tdequeue(i);
+				if (upthread) break;
+				i = (i + 1) % max_vcores();
+			}
+		}
+	}
+	return upthread;
+}
 
 /* Variables, types, and callbacks for the preemptive scheduler alarm */
 static void alarm_callback(struct alarm_waiter* awaiter);
@@ -148,31 +283,18 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		set_alarm(&adata->awaiter);
 	}
 	
-	/* If there is a currently running thread (i.e. restarted without explicit
-     * yield) just restart the thread */
 	if (current_uthread) {
 		run_current_uthread();
 		assert(0);
 	}
-
 	/* no one currently running, so lets get someone from the ready queue */
 	struct upthread_tcb *new_thread = NULL;
 	/* Try to get a thread.  If we get one, we'll break out and run it.  If not,
 	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
 	 * had a new event come in, one that may make us able to get a new_thread */
 	do {
-        mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-		mcs_lock_lock(&queue_lock, &qnode);
-		new_thread = TAILQ_FIRST(&ready_queue);
-		if (new_thread) {
-			TAILQ_REMOVE(&ready_queue, new_thread, next);
-			TAILQ_INSERT_TAIL(&active_queue, new_thread, next);
-			threads_active++;
-			threads_ready--;
-			mcs_lock_unlock(&queue_lock, &qnode);
+		if ((new_thread = __pth_thread_dequeue()))
 			break;
-		}
-		mcs_lock_unlock(&queue_lock, &qnode);
 		/* no new thread, try to yield */
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
 		/* TODO: you can imagine having something smarter here, like spin for a
@@ -218,14 +340,9 @@ void pth_thread_runnable(struct uthread *uthread)
 		default:
 			printf("Odd state %d for upthread %p\n", upthread->state, upthread);
 	}
-	upthread->state = UPTH_RUNNABLE;
 	/* Insert the newly created thread into the ready queue of threads.
 	 * It will be removed from this queue later when vcore_entry() comes up */
-    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
-	TAILQ_INSERT_TAIL(&ready_queue, upthread, next);
-	threads_ready++;
-	mcs_lock_unlock(&queue_lock, &qnode);
+	__pth_thread_enqueue(upthread);
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
 	if (can_adjust_vcores)
@@ -245,14 +362,6 @@ void pth_thread_runnable(struct uthread *uthread)
 void pth_thread_paused(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
-	/* Remove from the active list.  Note that I don't particularly care about
-	 * the active list.  We keep it around because it causes bugs and keeps us
-	 * honest.  After all, some 2LS may want an active list */
-    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
-	threads_active--;
-	TAILQ_REMOVE(&active_queue, upthread, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
 	/* communicate to pth_thread_runnable */
 	upthread->state = UPTH_BLK_PAUSED;
 	/* At this point, you could do something clever, like put it at the front of
@@ -292,6 +401,29 @@ void upthread_can_vcore_request(bool can)
 	can_adjust_vcores = can;
 }
 
+/* Tells the upthread 2LS not to do any work stealing. Only run threads placed
+ * in your local pvc queue. */
+void upthread_can_vcore_steal(bool can)
+{
+	/* checked when we would request or yield */
+	can_steal = can;
+}
+
+/* Tells the upthread 2LS how many vcores to consider when placing newly
+ * created threads in the per vcore run queues. */
+void upthread_set_num_vcores(int num)
+{
+	nr_vcores = num;
+}
+
+/* Tells the upthread 2LS to optimize the yield path with a short circuit if
+ * it's local pvc queue is empty.  In this case it will not actually doa
+ * context switch out of itself and back in.  */
+void upthread_short_circuit_yield(bool ss)
+{
+	ss_yield = ss;
+}
+
 /* Pthread interface stuff and helpers */
 
 int upthread_attr_init(upthread_attr_t *a)
@@ -304,30 +436,6 @@ int upthread_attr_init(upthread_attr_t *a)
 int upthread_attr_destroy(upthread_attr_t *a)
 {
 	return 0;
-}
-
-static void __upthread_free_stack(struct upthread_tcb *pt)
-{
-	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
-}
-
-static int __upthread_allocate_stack(struct upthread_tcb *pt)
-{
-	assert(pt->stacksize);
-	void* stackbot = mmap(0, pt->stacksize,
-	                      PROT_READ|PROT_WRITE|PROT_EXEC,
-	                      MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-	if (stackbot == MAP_FAILED)
-		return -1; // errno set by mmap
-	pt->stacktop = stackbot + pt->stacksize;
-	return 0;
-}
-
-// Warning, this will reuse numbers eventually
-static int get_next_pid(void)
-{
-	static uint32_t next_pid = 0;
-	return next_pid++;
 }
 
 int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize)
@@ -345,16 +453,22 @@ int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
  * a uthread representing thread0 (int main()) */
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
+	vcore_lib_init();
+	vc_mgmt = parlib_aligned_alloc(PGSIZE,
+	              sizeof(struct vc_mgmt) * max_vcores());
+	for (int i=0; i < max_vcores(); i++) {
+		STAILQ_INIT(&tqueue(i));
+		spinlock_init(&tqlock(i));
+		tqsize(i) = 0;
+		rseed(i) = i;
+	}
+
 	/* Set up the dtls key for use by each vcore for the alarm data used by
  	 * this scheduler */
 	alarm_dtls_key = dtls_key_create(free);
 
-	mcs_lock_init(&queue_lock);
 	/* Create a upthread_tcb for the main thread */
-	upthread_t t = parlib_aligned_alloc(ARCH_CL_SIZE,
-	                      sizeof(struct upthread_tcb));
-	assert(t);
-	memset(t, 0, sizeof(struct upthread_tcb));
+	upthread_t t = __upthread_alloc(0);
 	t->id = get_next_pid();
 	/* Fill in the main context stack info. */
 	void *stackbottom;
@@ -362,16 +476,10 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	parlib_get_main_stack(&stackbottom, &stacksize);
 	t->stacktop = stackbottom + stacksize;
 	t->stacksize = stacksize;
-	t->state = UPTH_CREATED;
 	t->detached = TRUE;
+	t->state = UPTH_RUNNING;
 	t->joiner = 0;
 	assert(t->id == 0);
-	/* Put the new upthread (thread0) on the active queue */
-	mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);	/* arguably, we don't need these (_S mode) */
-	threads_active++;
-	TAILQ_INSERT_TAIL(&active_queue, t, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
 
 	/* Handle syscall events. */
 	/* These functions are declared in parlib for simulating async syscalls on linux */
@@ -383,6 +491,7 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	 * yet, so if a 2LS somehow wants to have its init stuff use things like
 	 * vcore stacks or TLSs, we'll need to change this. */
 	uthread_lib_init((struct uthread*)t);
+
 	/* Now that we've returned from the init call, we are on vcore 0 and are
 	 * running, so let's enable interrupts */
 	t->state = UPTH_RUNNING;
@@ -392,53 +501,46 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
                    void *(*start_routine)(void *), void *arg)
 {
+	size_t stacksize = UPTHREAD_STACK_SIZE;
+	/* Get the stack size if a different one passed in */
+	if (attr) {
+		if (attr->stacksize) /* don't set a 0 stacksize */
+			stacksize = attr->stacksize;
+	}
+
+	/* Create the actual thread */
+	struct upthread_tcb *upthread;
+	upthread = __upthread_alloc(stacksize);
+	upthread->state = UPTH_CREATED;
+	upthread->id = get_next_pid();
+	upthread->detached = FALSE;				/* default */
+	upthread->joiner = 0;
+	/* Respect the attributes */
+	if (attr) {
+		if (attr->detachstate == UPTHREAD_CREATE_DETACHED)
+			upthread->detached = TRUE;
+	}
+	/* Set the u_tf to start up in __upthread_run, which will call the real
+	 * start_routine and pass it the arg.  Note those aren't set until later in
+	 * upthread_create(). */
+	init_uthread_tf(&upthread->uthread, __upthread_run,
+	                upthread->stacktop - upthread->stacksize,
+                    upthread->stacksize);
+	upthread->start_routine = start_routine;
+	upthread->arg = arg;
+	/* Initialize the uthread */
 	uthread_interrupt_safe(
-		/* Create the actual thread */
-		struct upthread_tcb *upthread;
-		upthread = parlib_aligned_alloc(ARCH_CL_SIZE, sizeof(struct upthread_tcb));
-		assert(upthread);
-		memset(upthread, 0, sizeof(struct upthread_tcb));
-		upthread->stacksize = UPTHREAD_STACK_SIZE;	/* default */
-		upthread->state = UPTH_CREATED;
-		upthread->id = get_next_pid();
-		upthread->detached = FALSE;				/* default */
-		upthread->joiner = 0;
-		/* Respect the attributes */
-		if (attr) {
-			if (attr->stacksize)					/* don't set a 0 stacksize */
-				upthread->stacksize = attr->stacksize;
-			if (attr->detachstate == UPTHREAD_CREATE_DETACHED)
-				upthread->detached = TRUE;
-		}
-		/* allocate a stack */
-		if (__upthread_allocate_stack(upthread))
-			printf("We're fucked\n");
-		/* Set the u_tf to start up in __upthread_run, which will call the real
-		 * start_routine and pass it the arg.  Note those aren't set until later in
-		 * upthread_create(). */
-		init_uthread_tf(&upthread->uthread, __upthread_run,
-		                upthread->stacktop - upthread->stacksize,
-		                upthread->stacksize);
-		upthread->start_routine = start_routine;
-		upthread->arg = arg;
-		/* Initialize the uthread */
 		uthread_init((struct uthread*)upthread);
 		uthread_runnable((struct uthread*)upthread);
-		*thread = upthread;
 	)
+	*thread = upthread;
 	return 0;
 }
 
 /* Helper that all upthread-controlled yield paths call.  Just does some
- * accounting.  This is another example of how the much-loathed (and loved)
- * active queue is keeping us honest. */
-static void __upthread_generic_yield(struct upthread_tcb *upthread)
+ * accounting. */
+void __upthread_generic_yield(struct upthread_tcb *upthread)
 {
-    mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
-	threads_active--;
-	TAILQ_REMOVE(&active_queue, upthread, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
 }
 
 /* Callback/bottom half of join, called from __uthread_yield (vcore context).
@@ -467,26 +569,26 @@ static void __pth_join_cb(struct uthread *uthread, void *arg)
 
 int upthread_join(struct upthread_tcb *join_target, void **retval)
 {
-	uthread_interrupt_safe(
-		/* Not sure if this is the right semantics.  There is a race if we deref
-		 * join_target and he is already freed (which would have happened if he was
-		 * detached. */
-		if (join_target->detached) {
-			printf("[upthread] trying to join on a detached upthread");
-			return -1;
-		}
-		/* See if it is already done, to avoid the pain of a uthread_yield() (the
-		 * early check is an optimization, pth_thread_yield() handles the race). */
-		if (!join_target->joiner) {
+	/* Not sure if this is the right semantics.  There is a race if we deref
+	 * join_target and he is already freed (which would have happened if he was
+	 * detached. */
+	if (join_target->detached) {
+		printf("[upthread] trying to join on a detached upthread");
+		return -1;
+	}
+	/* See if it is already done, to avoid the pain of a uthread_yield() (the
+	 * early check is an optimization, pth_thread_yield() handles the race). */
+	if (!join_target->joiner) {
+		uthread_interrupt_safe(
 			uthread_yield(TRUE, __pth_join_cb, join_target);
 			/* When we return/restart, the thread will be done */
-		} else {
-			assert(join_target->joiner == join_target);	/* sanity check */
-		}
-		if (retval)
-			*retval = join_target->retval;
-		free(join_target);
-	)
+		)
+	} else {
+		assert(join_target->joiner == join_target);	/* sanity check */
+	}
+	if (retval)
+		*retval = join_target->retval;
+	__upthread_free(join_target);
 	return 0;
 }
 
@@ -506,11 +608,9 @@ static void __pth_exit_cb(struct uthread *uthread, void *junk)
 	upthread->state = UPTH_EXITING;
 	/* Destroy the upthread */
 	uthread_cleanup(uthread);
-	/* Cleanup, mirroring upthread_create() */
-	__upthread_free_stack(upthread);
 	/* TODO: race on detach state (see join) */
 	if (upthread->detached) {
-		free(upthread);
+		__upthread_free(upthread);
 	} else {
 		/* See if someone is joining on us.  If not, we're done (and the
 		 * joiner will wake itself when it saw us there instead of 0). */
@@ -526,9 +626,9 @@ static void __pth_exit_cb(struct uthread *uthread, void *junk)
 
 void upthread_exit(void *ret)
 {
+	struct upthread_tcb *upthread = upthread_self();
+	upthread->retval = ret;
 	uthread_interrupt_safe(
-		struct upthread_tcb *upthread = upthread_self();
-		upthread->retval = ret;
 		uthread_yield(FALSE, __pth_exit_cb, 0);
 	)
 }
@@ -548,232 +648,14 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 /* Cooperative yielding of the processor, to allow other threads to run */
 int upthread_yield(void)
 {
+	/* Quick optimization to NOT yield if there is nothing else to run... */
+	if (ss_yield && !tqsize(vcore_id()))
+		return 0;
+	/* Do the actual yield */
 	uthread_interrupt_safe(
 		uthread_yield(TRUE, __pth_yield_cb, 0);
 	)
-	return 0;
-}
-
-int upthread_mutexattr_init(upthread_mutexattr_t* attr)
-{
-  attr->type = UPTHREAD_MUTEX_DEFAULT;
-  return 0;
-}
-
-int upthread_mutexattr_destroy(upthread_mutexattr_t* attr)
-{
-  return 0;
-}
-
-int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
-{
-	__attr->detachstate = __detachstate;
-	return 0;
-}
-
-int upthread_mutexattr_gettype(const upthread_mutexattr_t* attr, int* type)
-{
-  *type = attr ? attr->type : UPTHREAD_MUTEX_DEFAULT;
-  return 0;
-}
-
-int upthread_mutexattr_settype(upthread_mutexattr_t* attr, int type)
-{
-  if(type != UPTHREAD_MUTEX_NORMAL)
-    return EINVAL;
-  attr->type = type;
-  return 0;
-}
-
-int upthread_mutex_init(upthread_mutex_t* m, const upthread_mutexattr_t* attr)
-{
-  m->attr = attr;
-  atomic_init(&m->lock, 0);
-  return 0;
-}
-
-/* Set *spun to 0 when calling this the first time.  It will yield after 'spins'
- * calls.  Use this for adaptive mutexes and such. */
-static inline void spin_to_sleep(unsigned int spins, unsigned int *spun)
-{
-	uthread_interrupt_safe(
-		if ((*spun)++ == spins) {
-			upthread_yield();
-			*spun = 0;
-		}
-	)
-}
-
-int upthread_mutex_lock(upthread_mutex_t* m)
-{
-	unsigned int spinner = 0;
-	while(upthread_mutex_trylock(m))
-		while(*(volatile size_t*)&m->lock) {
-			cpu_relax();
-			spin_to_sleep(UPTHREAD_MUTEX_SPINS, &spinner);
-		}
-	/* normally we'd need a wmb() and a wrmb() after locking, but the
-	 * atomic_swap handles the CPU mb(), so just a cmb() is necessary. */
-	cmb();
-	return 0;
-}
-
-int upthread_mutex_trylock(upthread_mutex_t* m)
-{
-  return atomic_swap(&m->lock, 1) == 0 ? 0 : EBUSY;
-}
-
-int upthread_mutex_unlock(upthread_mutex_t* m)
-{
-  /* keep reads and writes inside the protected region */
-  rwmb();
-  wmb();
-  atomic_set(&m->lock, 0);
-  return 0;
-}
-
-int upthread_mutex_destroy(upthread_mutex_t* m)
-{
-  return 0;
-}
-
-int upthread_cond_init(upthread_cond_t *c, const upthread_condattr_t *a)
-{
-  c->attr = a;
-  memset(c->waiters,0,sizeof(c->waiters));
-  memset(c->in_use,0,sizeof(c->in_use));
-  c->next_waiter = 0;
-  return 0;
-}
-
-int upthread_cond_destroy(upthread_cond_t *c)
-{
-  return 0;
-}
-
-int upthread_cond_broadcast(upthread_cond_t *c)
-{
-  memset(c->waiters,0,sizeof(c->waiters));
-  return 0;
-}
-
-int upthread_cond_signal(upthread_cond_t *c)
-{
-  int i;
-  for(i = 0; i < MAX_UPTHREADS; i++)
-  {
-    if(c->waiters[i])
-    {
-      c->waiters[i] = 0;
-      break;
-    }
-  }
-  return 0;
-}
-
-int upthread_cond_wait(upthread_cond_t *c, upthread_mutex_t *m)
-{
-  uint32_t old_waiter = c->next_waiter;
-  uint32_t my_waiter = c->next_waiter;
-  
-  //allocate a slot
-  while (atomic_swap_u32(& (c->in_use[my_waiter]), SLOT_IN_USE) == SLOT_IN_USE)
-  {
-    my_waiter = (my_waiter + 1) % MAX_UPTHREADS;
-    assert (old_waiter != my_waiter);  // do not want to wrap around
-  }
-  c->waiters[my_waiter] = WAITER_WAITING;
-  c->next_waiter = (my_waiter+1) % MAX_UPTHREADS;  // race on next_waiter but ok, because it is advisary
-
-  upthread_mutex_unlock(m);
-
-  volatile uint32_t* poll = &c->waiters[my_waiter];
-  while(*poll);
-  c->in_use[my_waiter] = SLOT_FREE;
-  upthread_mutex_lock(m);
-
-  return 0;
-}
-
-int upthread_condattr_init(upthread_condattr_t *a)
-{
-  a = UPTHREAD_PROCESS_PRIVATE;
-  return 0;
-}
-
-int upthread_condattr_destroy(upthread_condattr_t *a)
-{
-  return 0;
-}
-
-int upthread_condattr_setpshared(upthread_condattr_t *a, int s)
-{
-  a->pshared = s;
-  return 0;
-}
-
-int upthread_condattr_getpshared(upthread_condattr_t *a, int *s)
-{
-  *s = a->pshared;
-  return 0;
-}
-
-upthread_t upthread_self()
-{
-  return (struct upthread_tcb*)current_uthread;
-}
-
-int upthread_equal(upthread_t t1, upthread_t t2)
-{
-  return t1 == t2;
-}
-
-int upthread_once(upthread_once_t* once_control, void (*init_routine)(void))
-{
-  if (atomic_swap_u32(once_control, 1) == 0)
-    init_routine();
-  return 0;
-}
-
-int upthread_barrier_init(upthread_barrier_t* b, const upthread_barrierattr_t* a, int count)
-{
-  b->nprocs = b->count = count;
-  b->sense = 0;
-  upthread_mutex_init(&b->pmutex, 0);
-  return 0;
-}
-
-int upthread_barrier_wait(upthread_barrier_t* b)
-{
-  unsigned int spinner = 0;
-  int ls = !b->sense;
-
-  upthread_mutex_lock(&b->pmutex);
-  int count = --b->count;
-  upthread_mutex_unlock(&b->pmutex);
-
-  if(count == 0)
-  {
-    printd("Thread %d is last to hit the barrier, resetting...\n", upthread_self()->id);
-    b->count = b->nprocs;
-	wmb();
-    b->sense = ls;
-    return UPTHREAD_BARRIER_SERIAL_THREAD;
-  }
-  else
-  {
-    while(b->sense != ls) {
-      cpu_relax();
-      spin_to_sleep(UPTHREAD_BARRIER_SPINS, &spinner);
-    }
-    return 0;
-  }
-}
-
-int upthread_barrier_destroy(upthread_barrier_t* b)
-{
-  upthread_mutex_destroy(&b->pmutex);
-  return 0;
+	return 1;
 }
 
 int upthread_detach(upthread_t thread)
@@ -783,16 +665,22 @@ int upthread_detach(upthread_t thread)
 	return 0;
 }
 
+int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
+{
+	__attr->detachstate = __detachstate;
+	return 0;
+}
+
+upthread_t upthread_self()
+{
+  return (struct upthread_tcb*)current_uthread;
+}
+
 static void pth_blockon_syscall(struct uthread* uthread, void *sysc)
 {
   struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
   upthread->state = UPTH_BLK_SYSC;
 
-  mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-  mcs_lock_lock(&queue_lock, &qnode);
-  threads_active--;
-  TAILQ_REMOVE(&active_queue, upthread, next);
-  mcs_lock_unlock(&queue_lock, &qnode);
   /* Set things up so we can wake this thread up later */
   ((struct syscall*)sysc)->u_data = uthread;
 }
@@ -831,4 +719,3 @@ static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type)
   assert(sysc);
   restart_thread(sysc);
 }
-
