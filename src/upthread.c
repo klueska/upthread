@@ -32,7 +32,6 @@ static bool can_steal = TRUE;
 static bool can_adjust_vcores = TRUE;
 static bool ss_yield = TRUE;
 static int nr_vcores = 0;
-static int num_threads = 0;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -189,12 +188,12 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	 * performance.  */
 	if (can_steal && !upthread) {
 
-		/* Steal up to num_threads/nr_vcores threads and return the first */
+		/* Steal up to half of the threads in the queue and return the first */
 		struct upthread_tcb *steal_threads(int vcoreid)
 		{
 			struct upthread_tcb *upthread = NULL;
-			int num_to_steal = num_threads / num_vcores();
-			if (num_to_steal && (tqsize(vcoreid) > num_to_steal)) {
+			int num_to_steal = (tqsize(vcoreid) + 1) / 2;
+			if (num_to_steal) {
 				upthread = tdequeue(vcoreid);
 				if (upthread) {
 					for (int i=1; i<num_to_steal; i++) {
@@ -301,7 +300,6 @@ void pth_thread_runnable(struct uthread *uthread)
 	 * going on to make a decision about how many vcores to request. */
 	if (state == UPTH_CREATED || can_adjust_vcores)
 		vcore_request_specific(qid);
-	atomic_add(&num_threads, 1);
 }
 
 /* For some reason not under its control, the uthread stopped running (compared
@@ -486,7 +484,6 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
  * accounting. */
 void __upthread_generic_yield(struct upthread_tcb *upthread)
 {
-	atomic_add(&num_threads, -1);
 }
 
 /* Callback/bottom half of join, called from __uthread_yield (vcore context).
