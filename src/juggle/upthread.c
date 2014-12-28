@@ -240,7 +240,6 @@ static void alarm_callback(struct alarm_waiter* awaiter);
 static dtls_key_t alarm_dtls_key;
 struct alarm_data {
 	struct alarm_waiter awaiter;
-	int vcoreid;
 	bool armed;
 };
 
@@ -248,7 +247,6 @@ static void init_adata(struct alarm_data *adata) {
 	init_awaiter(&adata->awaiter, alarm_callback);
 	adata->awaiter.data = adata;
 	adata->armed = false;
-	adata->vcoreid = vcore_id();
 }
 
 static void alarm_callback(struct alarm_waiter* awaiter) {
@@ -256,7 +254,10 @@ static void alarm_callback(struct alarm_waiter* awaiter) {
 	spinlock_lock(&awaiter->lock);
 		if (adata->armed) {
 			adata->armed = false;
-			vcore_signal(adata->vcoreid);
+			if (current_uthread) {
+				pth_thread_paused(current_uthread);
+				current_uthread = NULL;
+			}
 		} else {
 			free(adata);
 		}
@@ -396,6 +397,7 @@ void pth_thread_runnable(struct uthread *uthread)
 void pth_thread_paused(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	__upthread_generic_yield(upthread);
 	/* communicate to pth_thread_runnable */
 	upthread->state = UPTH_BLK_PAUSED;
 	/* At this point, you could do something clever, like put it at the front of
