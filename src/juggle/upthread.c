@@ -8,7 +8,6 @@
 #include <parlib/parlib.h>
 #include <parlib/atomic.h>
 #include <parlib/arch.h>
-#include <parlib/mcs.h>
 #include <parlib/vcore.h>
 #include <parlib/alarm.h>
 #include "upthread.h"
@@ -30,10 +29,12 @@ struct vc_mgmt *vc_mgmt;
 #define tqsize(i) (vc_mgmt[i].tqsize)
 #define rseed(i)  (vc_mgmt[i].rseed)
 
-static bool can_adjust_vcores = TRUE;
+//static bool can_adjust_vcores = FALSE;//TRUE;
+//static bool can_steal = TRUE;
 static bool can_steal = TRUE;
-static int nr_vcores = 1;
+static bool can_adjust_vcores = TRUE;
 static bool ss_yield = TRUE;
+static int nr_vcores = 0;
 static uint64_t __preempt_period = DEFAULT_PREEMPT_PERIOD;
 static __thread uint64_t last_preempt_period = DEFAULT_PREEMPT_PERIOD;
 
@@ -93,7 +94,15 @@ static void __upthread_free(struct upthread_tcb *pt)
 	assert(!munmap(pt->stacktop - pt->stacksize, pt->stacksize));
 }
 
-int get_next_queue_id(struct upthread_tcb *upthread)
+int get_next_queue_id_basic(struct upthread_tcb *upthread)
+{
+	static int next_vcore = 1;
+	int id = next_vcore;
+	next_vcore = (next_vcore + 1) % max_vcores();
+	return id;
+}
+
+int get_next_queue_id_tls_aware(struct upthread_tcb *upthread)
 {
   static const int l1cachesize = 0x8000;
 	static int sid = 0;
@@ -134,31 +143,41 @@ int get_next_queue_id(struct upthread_tcb *upthread)
 	return sid;
 }
 
-static void __pth_thread_enqueue(struct upthread_tcb *upthread)
+static int __pth_thread_enqueue(struct upthread_tcb *upthread, bool athead)
 {
-	int vcoreid = vcore_id();
 	int state = upthread->state;
 	upthread->state = UPTH_RUNNABLE;
 
 	if (state == UPTH_CREATED)
-		vcoreid = get_next_queue_id(upthread);
+		upthread->preferred_vcq = get_next_queue_id_basic(upthread);
+
+	int vcoreid = upthread->preferred_vcq;
 	spin_pdr_lock(&tqlock(vcoreid));
-	STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
+	if (athead)
+		STAILQ_INSERT_HEAD(&tqueue(vcoreid), upthread, next);
+	else
+		STAILQ_INSERT_TAIL(&tqueue(vcoreid), upthread, next);
 	tqsize(vcoreid)++;
 	spin_pdr_unlock(&tqlock(vcoreid));
+
+	return vcoreid;
 }
 
 static struct upthread_tcb *__pth_thread_dequeue()
 {
 	inline struct upthread_tcb *tdequeue(int vcoreid)
 	{
-		struct upthread_tcb *upthread;
-		spin_pdr_lock(&tqlock(vcoreid));
-		if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
-			STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
-			tqsize(vcoreid)--;
+		struct upthread_tcb *upthread = NULL;
+		if (tqsize(vcoreid)) {
+			spin_pdr_lock(&tqlock(vcoreid));
+			if ((upthread = STAILQ_FIRST(&tqueue(vcoreid)))) {
+				STAILQ_REMOVE_HEAD(&tqueue(vcoreid), next);
+				tqsize(vcoreid)--;
+			}
+			spin_pdr_unlock(&tqlock(vcoreid));
 		}
-		spin_pdr_unlock(&tqlock(vcoreid));
+		if (upthread)
+			upthread->preferred_vcq = vcore_id();
 		return upthread;
 	}
 
@@ -171,22 +190,43 @@ static struct upthread_tcb *__pth_thread_dequeue()
 	/* If there isn't one, try and steal one from someone else's queue. This
 	 * assumes nr_vcores is pretty stable across the whole run for high
 	 * performance.  */
-    if (can_steal && !upthread) {
+	if (can_steal && !upthread) {
+
+		/* Steal up to half of the threads in the queue and return the first */
+		struct upthread_tcb *steal_threads(int vcoreid)
+		{
+			struct upthread_tcb *upthread = NULL;
+			int num_to_steal = (tqsize(vcoreid) + 1) / 2;
+			if (num_to_steal) {
+				upthread = tdequeue(vcoreid);
+				if (upthread) {
+					for (int i=1; i<num_to_steal; i++) {
+						struct upthread_tcb *u = tdequeue(vcoreid);
+						if (u) __pth_thread_enqueue(u, false);
+						else break;
+					}
+				}
+			}
+			return upthread;
+		}
+
 		/* First try doing power of two choices. */
-		int choice[2] = { rand_r(&rseed(vcoreid)) % nr_vcores,
-		                  rand_r(&rseed(vcoreid)) % nr_vcores};
+		int choice[2] = { rand_r(&rseed(vcoreid)) % num_vcores(),
+		                  rand_r(&rseed(vcoreid)) % num_vcores()};
 		int size[2] = { tqsize(choice[0]),
 		                tqsize(choice[1])};
 		int id = (size[0] > size[1]) ? 0 : 1;
-		if (tqsize(choice[id]) > 0)
-			upthread = tdequeue(choice[id]);
+		if (vcoreid != choice[id])
+			upthread = steal_threads(choice[id]);
+		else
+			upthread = steal_threads(choice[!id]);
 
 		/* Fall back to looping through all vcores. This time I go through
- 		 * max_vcores() just to make sure I don't miss anything. */
+		 * max_vcores() just to make sure I don't miss anything. */
 		if (!upthread) {
 			int i = (vcoreid + 1) % max_vcores();
 			while(i != vcoreid) {
-				upthread = tdequeue(i);
+				upthread = steal_threads(i);
 				if (upthread) break;
 				i = (i + 1) % max_vcores();
 			}
@@ -281,6 +321,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	/* Try to get a thread.  If we get one, we'll break out and run it.  If not,
 	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
 	 * had a new event come in, one that may make us able to get a new_thread */
+	int spin_count = 100;
 	do {
 		if ((new_thread = __pth_thread_dequeue()))
 			break;
@@ -288,15 +329,18 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
 		/* TODO: you can imagine having something smarter here, like spin for a
 		 * bit before yielding (or not at all if you want to be greedy). */
-		if (can_adjust_vcores) {
+		if (can_adjust_vcores && !(spin_count--)) {
 			spinlock_lock(&adata->awaiter.lock);
 				adata->armed = false;
 				__new_alarm_data();
 			spinlock_unlock(&adata->awaiter.lock);
 			vcore_yield(FALSE);
 		}
+		handle_events();
+		cpu_relax();
 	} while (1);
 	assert(new_thread->state == UPTH_RUNNABLE);
+	new_thread->state = UPTH_RUNNING;
 	run_uthread((struct uthread*)new_thread);
 	assert(0);
 }
@@ -311,30 +355,32 @@ static void __upthread_run(void)
 void pth_thread_runnable(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	int state = upthread->state;
+	int qid = 0;
 	/* At this point, the 2LS can see why the thread blocked and was woken up in
 	 * the first place (coupling these things together).  On the yield path, the
 	 * 2LS was involved and was able to set the state.  Now when we get the
 	 * thread back, we can take a look. */
 	printd("upthread %08p runnable, state was %d\n", upthread, upthread->state);
-	switch (upthread->state) {
+	switch (state) {
+		case (UPTH_BLK_SYSC):
+			qid = __pth_thread_enqueue(upthread, true);
+			break;
 		case (UPTH_CREATED):
 		case (UPTH_BLK_YIELDING):
 		case (UPTH_BLK_JOINING):
-		case (UPTH_BLK_SYSC):
 		case (UPTH_BLK_PAUSED):
 		case (UPTH_BLK_MUTEX):
-			/* can do whatever for each of these cases */
+			qid = __pth_thread_enqueue(upthread, false);
 			break;
 		default:
 			printf("Odd state %d for upthread %p\n", upthread->state, upthread);
 	}
-	/* Insert the newly created thread into the ready queue of threads.
-	 * It will be removed from this queue later when vcore_entry() comes up */
-	__pth_thread_enqueue(upthread);
+
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
-	if (can_adjust_vcores)
-		vcore_request(1);
+	if (state == UPTH_CREATED || can_adjust_vcores)
+		vcore_request_specific(qid);
 }
 
 /* For some reason not under its control, the uthread stopped running (compared
@@ -401,7 +447,7 @@ void upthread_can_vcore_steal(bool can)
  * created threads in the per vcore run queues. */
 void upthread_set_num_vcores(int num)
 {
-	nr_vcores = num;
+	nr_vcores = MIN(num, max_vcores());
 }
 
 /* Tells the upthread 2LS to optimize the yield path with a short circuit if
@@ -450,6 +496,7 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 		tqsize(i) = 0;
 		rseed(i) = i;
 	}
+	nr_vcores = max_vcores();
 
 	/* Set up the dtls key for use by each vcore for the alarm data used by
  	 * this scheduler */
@@ -654,6 +701,7 @@ upthread_t upthread_self()
 static void pth_blockon_syscall(struct uthread* uthread, void *sysc)
 {
   struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+  __upthread_generic_yield(upthread);
   upthread->state = UPTH_BLK_SYSC;
 
   /* Set things up so we can wake this thread up later */
