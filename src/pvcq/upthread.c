@@ -32,6 +32,7 @@ static bool can_steal = TRUE;
 static bool can_adjust_vcores = TRUE;
 static bool ss_yield = TRUE;
 static int nr_vcores = 0;
+static volatile int next_queue_id = 0;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -91,10 +92,12 @@ static void __upthread_free(struct upthread_tcb *pt)
 
 int get_next_queue_id_basic(struct upthread_tcb *upthread)
 {
-	static int next_vcore = 0;
-	int id = next_vcore;
-	next_vcore = (next_vcore + 1) % num_vcores();//max_vcores();
-	return id;
+	while (1) {
+		int id = next_queue_id;
+		int next_id = id + 1 == nr_vcores ? 0 : id + 1;
+		if (__sync_bool_compare_and_swap(&next_queue_id, id, next_id))
+			return id;
+	}
 }
 
 int get_next_queue_id_tls_aware(struct upthread_tcb *upthread)
@@ -297,7 +300,7 @@ void pth_thread_runnable(struct uthread *uthread)
 
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
-	if (state == UPTH_CREATED || can_adjust_vcores)
+	if (can_adjust_vcores)
 		vcore_request_specific(qid);
 }
 
@@ -366,6 +369,7 @@ void upthread_can_vcore_steal(bool can)
 void upthread_set_num_vcores(int num)
 {
 	nr_vcores = MIN(num, max_vcores());
+	next_queue_id = nr_vcores > 1 ? 1 : 0;
 }
 
 /* Tells the upthread 2LS to optimize the yield path with a short circuit if
@@ -414,7 +418,7 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 		tqsize(i) = 0;
 		rseed(i) = i;
 	}
-	nr_vcores = max_vcores();
+	upthread_set_num_vcores(max_vcores());
 
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = __upthread_alloc(0);
