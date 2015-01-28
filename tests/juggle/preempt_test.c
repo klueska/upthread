@@ -17,7 +17,6 @@
 
 #define MAX_NR_TEST_THREADS 100000
 int nr_threads = 1000;
-int nr_vcores = 24;
 int amt_fake_work = 0;
 
 upthread_t my_threads[MAX_NR_TEST_THREADS];
@@ -44,10 +43,12 @@ void *worker_thread(void* arg)
 int main(int argc, char** argv) 
 {
 	upthread_set_sched_period(1000000);
+	int nr_vcores = max_vcores();
 	/* OS dependent prep work */
 	if (nr_vcores) {
 		/* Only do the vcore trickery if requested */
 		upthread_can_vcore_request(FALSE);	/* 2LS won't manage vcores */
+		upthread_can_vcore_steal(FALSE);	/* 2LS won't load balance */
 		upthread_set_num_vcores(nr_vcores);
 		vcore_request(nr_vcores - 1);		/* ghetto incremental interface */
 		for (int i = 0; i < nr_vcores; i++) {
