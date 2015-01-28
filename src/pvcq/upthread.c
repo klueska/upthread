@@ -35,7 +35,6 @@ static int nr_vcores = 0;
 
 /* Helper / local functions */
 static int get_next_pid(void);
-static inline void spin_to_sleep(unsigned int spins, unsigned int *spun);
 
 /* Linux Specific! (handle async syscall events) */
 static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type);
