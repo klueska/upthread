@@ -24,6 +24,9 @@ LIB_HFILES = \
   @COMMONDIR@/upthread-common.h \
   @VARIANTDIR@/upthread.h
 
+LIB_COMPAT_HFILES = \
+  @COMMONDIR@/pthread.h
+
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
 LIB_INCLUDE_PATH = -I$(VARIANTDIR) -I$(COMMONDIR)
 
@@ -36,7 +39,9 @@ libupthread@VARIANT_SUFFIX@_la_LIBADD = $(LPARLIB)
 
 # Setup a directory where all of the include files will be installed
 upthreadincdir = $(includedir)/upthread@VARIANT_SUFFIX@
+upthreadcompatincdir = $(includedir)/upthread@VARIANT_SUFFIX@/compatibility
 dist_upthreadinc_DATA = $(LIB_HFILES)
+dist_upthreadcompatinc_DATA = $(LIB_COMPAT_HFILES)
 
 # Setup parameters to build the test programs.
 # Unfortunately, I have to list all of the variants here since @TESTSDIR@ wont
