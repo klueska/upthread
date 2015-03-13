@@ -572,6 +572,7 @@ void upthread_exit(void *ret)
 {
 	struct upthread_tcb *upthread = upthread_self();
 	upthread->retval = ret;
+	destroy_dtls();
 	uthread_yield(FALSE, __pth_exit_cb, 0);
 }
 

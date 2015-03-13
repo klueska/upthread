@@ -4,6 +4,7 @@
 #include <sys/queue.h>
 #include <parlib/vcore.h>
 #include <parlib/uthread.h>
+#include <parlib/dtls.h>
 #include <parlib/mcs.h>
 #include <parlib/spinlock.h>
 #include <parlib/waitfreelist.h>
@@ -151,6 +152,14 @@ int upthread_barrier_init(upthread_barrier_t* b,
                           const upthread_barrierattr_t* a, int count);
 int upthread_barrier_wait(upthread_barrier_t* b);
 int upthread_barrier_destroy(upthread_barrier_t* b);
+
+/* Get/Setpsecific stuff */
+typedef dtls_key_t* upthread_key_t;
+int upthread_key_create (upthread_key_t *__key,
+                        void (*__destr_function) (void *));
+int upthread_key_delete (upthread_key_t __key);
+void *upthread_getspecific (upthread_key_t __key);
+int upthread_setspecific (upthread_key_t __key, const void *__pointer);
 
 #ifdef __cplusplus
 }

@@ -15,6 +15,7 @@ LIB_CFILES = \
   @COMMONDIR@/barrier.c \
   @COMMONDIR@/semaphore.c \
   @COMMONDIR@/futex.c \
+  @COMMONDIR@/dtls.c \
   @VARIANTDIR@/upthread.c
 
 LIB_HFILES = \
