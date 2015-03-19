@@ -1,9 +1,9 @@
 #include <sys/queue.h>
 #include <parlib/waitfreelist.h>
-#include <assert.h>
 #include <stdio.h>
 #include <errno.h>
 #include <parlib/spinlock.h>
+#include "internal/assert.h"
 #include "upthread.h"
 #include "futex.h"
 

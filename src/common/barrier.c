@@ -1,6 +1,6 @@
 #include <errno.h>
 #include <sys/queue.h>
-#include <assert.h>
+#include "internal/assert.h"
 #include "upthread.h"
 
 int upthread_barrierattr_init(upthread_barrierattr_t *attr)

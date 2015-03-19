@@ -1,6 +1,6 @@
 #include <errno.h>
 #include <sys/queue.h>
-#include <assert.h>
+#include "internal/assert.h"
 #include "upthread.h"
 
 int upthread_mutexattr_init(upthread_mutexattr_t* attr)

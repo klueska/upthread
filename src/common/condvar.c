@@ -1,6 +1,6 @@
 #include <errno.h>
 #include <sys/queue.h>
-#include <assert.h>
+#include "internal/assert.h"
 #include "upthread.h"
 
 int upthread_condattr_init(upthread_condattr_t *a)

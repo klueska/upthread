@@ -2,7 +2,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
-#include <assert.h>
 #include <sys/queue.h>
 #include <sys/mman.h>
 #include <parlib/parlib.h>
@@ -10,6 +9,7 @@
 #include <parlib/arch.h>
 #include <parlib/vcore.h>
 #include <parlib/alarm.h>
+#include "internal/assert.h"
 #include "upthread.h"
 
 #define DEFAULT_PREEMPT_PERIOD 10000 // in microseconds
