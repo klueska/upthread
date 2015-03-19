@@ -31,7 +31,7 @@ int upthread_barrier_init(upthread_barrier_t* barrier,
 	return 0;
 }
 
-int upthread_barrier_wait(upthread_barrier_t* barrier)
+int upthread_barrier_destroy(upthread_barrier_t* barrier)
 {
 	assert(barrier != NULL);
 	free(barrier->signals);
@@ -53,7 +53,8 @@ static void __barrier_block(struct uthread *uthread, void *__blocked)
 	blocked->len += 1;
 	mcs_lock_unlock(&blocked->mtx, blocked->qnode);
 }
-int upthread_barrier_destroy(upthread_barrier_t* barrier)
+
+int upthread_barrier_wait(upthread_barrier_t* barrier)
 {
 	assert(barrier != NULL);
 
