@@ -9,6 +9,16 @@ VARIANTDIR = $(srcdir)/@VARIANTDIR@
 COMMONDIR = $(srcdir)/@COMMONDIR@
 
 # List of C FILES to build into objects
+if LITHE_VARIANT
+LIB_CFILES = \
+  @VARIANTDIR@/mutex.c \
+  @VARIANTDIR@/condvar.c \
+  @VARIANTDIR@/barrier.c \
+  @VARIANTDIR@/semaphore.c \
+  @VARIANTDIR@/futex.c \
+  @COMMONDIR@/dtls.c \
+  @VARIANTDIR@/upthread.c
+else
 LIB_CFILES = \
   @COMMONDIR@/mutex.c \
   @COMMONDIR@/condvar.c \
@@ -17,6 +27,7 @@ LIB_CFILES = \
   @COMMONDIR@/futex.c \
   @COMMONDIR@/dtls.c \
   @VARIANTDIR@/upthread.c
+endif
 
 LIB_HFILES = \
   @COMMONDIR@/semaphore.h \
@@ -35,7 +46,7 @@ lib_LTLIBRARIES = libupthread@VARIANT_SUFFIX@.la
 libupthread@VARIANT_SUFFIX@_la_CFLAGS = $(AM_CFLAGS)
 libupthread@VARIANT_SUFFIX@_la_CFLAGS += $(LIB_INCLUDE_PATH)
 libupthread@VARIANT_SUFFIX@_la_SOURCES = $(LIB_FILES)
-libupthread@VARIANT_SUFFIX@_la_LIBADD = $(LPARLIB)
+libupthread@VARIANT_SUFFIX@_la_LIBADD = $(LPARLIB) $(LLITHE)
 
 # Setup a directory where all of the include files will be installed
 upthreadincdir = $(includedir)/upthread@VARIANT_SUFFIX@

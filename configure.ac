@@ -69,6 +69,7 @@ COMMONDIR=$SRCDIR/common
 AC_SUBST([SRCDIR])
 AC_SUBST([COMMONDIR])
 AC_SUBST([LPARLIB])
+AC_SUBST([LLITHE])
 AM_SUBST_NOTMAKE([SRCDIR])
 AM_SUBST_NOTMAKE([COMMONDIR])
 
@@ -83,6 +84,17 @@ CFLAGS="$CFLAGS -I$PARLIBPATH/include"
 CXXFLAGS="$CXXFLAGS -I$PARLIBPATH/include"
 LDFLAGS="$LDFLAGS -L$PARLIBPATH/lib"
 
+# Add lithe -L and -I directories into LDFLAGS and C/CXXFLAGS respectively,
+# if they are not install on the system already
+AC_ARG_WITH([lithe],
+  [AS_HELP_STRING([--with-lithe],
+    [path to your lithe installation if not in a standard location])],
+  [LITHEPATH="$withval"], [])
+
+CFLAGS="$CFLAGS -I$LITHEPATH/include"
+CXXFLAGS="$CXXFLAGS -I$LITHEPATH/include"
+LDFLAGS="$LDFLAGS -L$LITHEPATH/lib"
+
 # Specify the variant we want to build
 AC_ARG_WITH([variant],
   [AS_HELP_STRING([--with-variant],
@@ -94,7 +106,7 @@ AC_ARG_WITH([variant],
    VARIANTDIR="$SRCDIR/$withval"
    TESTSDIR="tests/$withval"], [
   echo "Error! You must specify a upthread variant to build for."
-  echo "Variants include 'gq', 'pvcq', and 'juggle'"
+  echo "Variants include 'gq', 'pvcq', 'juggle', and 'lithe'"
   echo "See 'configure --help' for details."
   exit -1
 ])
@@ -105,6 +117,7 @@ AC_SUBST([TESTSDIR])
 AM_CONDITIONAL([GQ_VARIANT], test "x$VARIANT" = xgq)
 AM_CONDITIONAL([JUGGLE_VARIANT], test "x$VARIANT" = xjuggle)
 AM_CONDITIONAL([PVCQ_VARIANT], test "x$VARIANT" = xpvcq)
+AM_CONDITIONAL([LITHE_VARIANT], test "x$VARIANT" = xlithe)
 
 # Add a suffix to the name of the library for variant being built
 AC_ARG_WITH([suffix],
@@ -136,6 +149,27 @@ LIBS="$save_LIBS"
 LPARLIB=-lparlib
 else
 LPARLIB=
+fi
+
+# Check whether LIBRARY exists and contains FUNCT
+# Execute ACT-IF-FOUND if it does.  ACT-IF-NOT otherwise.
+#AC_CHECK_LIB(LIBRARY, FUNCT, [ACT-IF-FOUND], [ACT-IF-NOT])
+if [[ "$VARIANT" = "lithe" ]]; then
+save_LDFLAGS="$LDFLAGS"
+save_LIBS="$LIBS"
+LDFLAGS="$LDFLAGS -static -lithe -lpthread"
+LIBS="$LIBS -lparlib -lpthread"
+AC_CHECK_LIB(ithe, lithe_sched_enter, [], [
+    echo "Error! You need to have lithe installed on your system in order to build upthread for lithe!"
+    echo "Try setting --with-lithe=<lithe_install_dir>"
+    echo "See 'configure --help' for details."
+    exit -1
+])
+LDFLAGS="$save_LDFLAGS"
+LIBS="$save_LIBS"
+LLITHE=-lithe
+else
+LLITHE=
 fi
 
 # Actually output all declared files
