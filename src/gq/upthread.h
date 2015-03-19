@@ -1,6 +1,7 @@
 #ifndef UPTHREAD_H
 #define UPTHREAD_H
 
+#include "upthread-types.h"
 #include "upthread-common.h"
 
 #ifdef __cplusplus

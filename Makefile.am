@@ -29,11 +29,19 @@ LIB_CFILES = \
   @VARIANTDIR@/upthread.c
 endif
 
+if LITHE_VARIANT
+LIB_HFILES = \
+  @VARIANTDIR@/upthread-types.h \
+  @COMMONDIR@/upthread-common.h \
+  @VARIANTDIR@/upthread.h
+else
 LIB_HFILES = \
   @COMMONDIR@/semaphore.h \
   @COMMONDIR@/futex.h \
+  @COMMONDIR@/upthread-types.h \
   @COMMONDIR@/upthread-common.h \
   @VARIANTDIR@/upthread.h
+endif
 
 LIB_COMPAT_HFILES = \
   @COMMONDIR@/pthread.h
