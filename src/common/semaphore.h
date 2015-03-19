@@ -14,13 +14,6 @@
 extern "C" {
 #endif
 
-/* A upthread semaphore struct */
-typedef struct upthread_sem {
-  int value;
-  int nwaiters;
-} upthread_sem_t;
-#define UPTHREAD_SEM_INITIALIZER {0, 0}
-
 /* Initialize a semaphore. */
 int upthread_sem_init(upthread_sem_t *sem, int count);
 

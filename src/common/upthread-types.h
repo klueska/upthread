@@ -84,6 +84,13 @@ typedef struct upthread_barrier {
 } upthread_barrier_t;
 typedef void upthread_barrierattr_t;
 
+/* Sempahores */
+typedef struct upthread_sem {
+  int value;
+  int nwaiters;
+} upthread_sem_t;
+#define UPTHREAD_SEM_INITIALIZER {0, 0}
+
 /* Get/Setpsecific stuff */
 typedef dtls_key_t* upthread_key_t;
 

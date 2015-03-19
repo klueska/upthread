@@ -3,6 +3,8 @@
 
 #include "upthread-types.h"
 #include "upthread-common.h"
+#include "futex.h"
+#include "semaphore.h"
 
 #ifdef __cplusplus
 extern "C" {

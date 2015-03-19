@@ -31,6 +31,8 @@ endif
 
 if LITHE_VARIANT
 LIB_HFILES = \
+  @COMMONDIR@/semaphore.h \
+  @VARIANTDIR@/futex.h \
   @VARIANTDIR@/upthread-types.h \
   @COMMONDIR@/upthread-common.h \
   @VARIANTDIR@/upthread.h
