@@ -15,9 +15,9 @@ LIB_CFILES = \
   @VARIANTDIR@/condvar.c \
   @VARIANTDIR@/barrier.c \
   @VARIANTDIR@/semaphore.c \
-  @VARIANTDIR@/futex.c \
   @COMMONDIR@/dtls.c \
   @VARIANTDIR@/upthread.c
+  #@VARIANTDIR@/futex.c \ #Included in lithe already
 else
 LIB_CFILES = \
   @COMMONDIR@/mutex.c \
