@@ -60,7 +60,7 @@ lib_LTLIBRARIES = libupthread@VARIANT_SUFFIX@.la
 libupthread@VARIANT_SUFFIX@_la_CFLAGS = $(AM_CFLAGS)
 libupthread@VARIANT_SUFFIX@_la_CFLAGS += $(LIB_INCLUDE_PATH)
 libupthread@VARIANT_SUFFIX@_la_SOURCES = $(LIB_FILES)
-libupthread@VARIANT_SUFFIX@_la_LIBADD = $(LPARLIB)
+libupthread@VARIANT_SUFFIX@_la_LIBADD = $(LLITHE) $(LPARLIB)
 
 # Setup a directory where all of the include files will be installed
 upthreadincdir = $(includedir)/upthread@VARIANT_SUFFIX@
