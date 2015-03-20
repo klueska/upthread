@@ -10,11 +10,11 @@ check_PROGRAMS = upthread_test syscall_test
 upthread_test_SOURCES =  @TESTSDIR@/upthread_test.c
 upthread_test_CFLAGS = $(AM_CFLAGS)
 upthread_test_CFLAGS += $(LIB_INCLUDE_PATH)
-upthread_test_LDADD = -lupthread@VARIANT_SUFFIX@ $(LPARLIB)
+upthread_test_LDADD = libupthread@VARIANT_SUFFIX@.la -lithe -lparlib
 
 syscall_test_SOURCES =  @TESTSDIR@/syscall_test.c
 syscall_test_CFLAGS = $(AM_CFLAGS)
 syscall_test_CFLAGS += $(LIB_INCLUDE_PATH)
-syscall_test_LDADD = -lupthread@VARIANT_SUFFIX@ $(LPARLIB)
+syscall_test_LDADD = libupthread@VARIANT_SUFFIX@.la -lithe -lparlib
 
 endif
