@@ -73,6 +73,7 @@ dist_upthreadcompatinc_DATA = $(LIB_COMPAT_HFILES)
 include $(srcdir)/tests/gq/Makefile.am
 include $(srcdir)/tests/juggle/Makefile.am
 include $(srcdir)/tests/pvcq/Makefile.am
+include $(srcdir)/tests/lithe/Makefile.am
 
 ChangeLog:
 	cd $(srcdir); \
