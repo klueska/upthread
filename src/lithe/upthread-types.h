@@ -1,7 +1,7 @@
 #ifndef UPTHREAD_TYPES_H
 #define UPTHREAD_TYPES_H
 
-#include <lithe/context.h>
+#include <lithe/fork_join_sched.h>
 #include <lithe/barrier.h>
 #include <lithe/mutex.h>
 #include <lithe/condvar.h>
@@ -12,29 +12,18 @@
 extern "C" {
 #endif
 
-/* Pthread struct.  First has to be the uthread struct, which the vcore code
- * will access directly (as if upthread_tcb is a struct uthread). */
-struct upthread_tcb;
-struct upthread_tcb {
-	struct uthread uthread;
-	STAILQ_ENTRY(upthread_tcb) next;
-	int state;
+/* Pthread struct. */
+struct upthread_lithe_context;
+struct upthread_lithe_context {
+	lithe_fork_join_context_t context;
 	bool detached;
-	struct upthread_tcb *joiner;			/* raced on by exit and join */
-	uint32_t id;
-	uint32_t stacksize;
-	void *stacktop;
+	struct upthread_lithe_context *joiner;
 	void *(*start_routine)(void*);
 	void *arg;
 	void *retval;
-	int preferred_vcq;
-} __attribute__((aligned(ARCH_CL_SIZE)));
-typedef struct upthread_tcb* upthread_t;
-STAILQ_HEAD(upthread_queue, upthread_tcb);
-//struct upthread_tcb {
-//	struct lithe_context ctx;
-//} __attribute__((aligned(ARCH_CL_SIZE)));
-//typedef struct upthread_tcb* upthread_t;
+};
+typedef struct upthread_lithe_context upthread_lithe_context_t;
+typedef struct upthread_lithe_context* upthread_t;
 
 /* The core upthreads API */
 typedef struct {
