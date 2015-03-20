@@ -21,13 +21,14 @@ struct upthread_tcb {
 	bool detached;
 	struct upthread_tcb *joiner;			/* raced on by exit and join */
 	uint32_t id;
+	int stack_offset;
 	uint32_t stacksize;
 	void *stacktop;
 	void *(*start_routine)(void*);
 	void *arg;
 	void *retval;
 	int preferred_vcq;
-} __attribute__((aligned(ARCH_CL_SIZE)));
+};
 typedef struct upthread_tcb* upthread_t;
 STAILQ_HEAD(upthread_queue, upthread_tcb);
 
