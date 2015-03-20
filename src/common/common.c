@@ -1,23 +1,40 @@
 #include <upthread.h>
 
+/* Attr stuff. */
+int upthread_attr_init(upthread_attr_t *a)
+{
+	a->stacksize = UPTHREAD_STACK_SIZE;
+	a->detachstate = UPTHREAD_CREATE_JOINABLE;
+	a->stackaddr = NULL;
+	return 0;
+}
+
+int upthread_attr_destroy(upthread_attr_t *a)
+{
+	return 0;
+}
+
+int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize)
+{
+	attr->stacksize = stacksize;
+	return 0;
+}
+int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
+{
+	*stacksize = attr->stacksize;
+	return 0;
+}
+
+int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
+{
+	__attr->detachstate = __detachstate;
+	return 0;
+}
+
 /* Compare two thread identifiers.  */
 int upthread_equal(upthread_t __thread1, upthread_t __thread2)
 {
 	return __thread1 == __thread2;
-}
-
-/* Initialize thread attribute *ATTR with attributes corresponding to the
-   already running thread TH.  It shall be called on uninitialized ATTR
-   and destroyed with pthread_attr_destroy when no longer needed.  */
-int upthread_getattr_np (upthread_t __th, upthread_attr_t *__attr)
-{
-	__attr->stackaddr = __th->stacktop - __th->stacksize;
-	__attr->stacksize = __th->stacksize;
-	if (__th->detached)
-		__attr->detachstate = UPTHREAD_CREATE_DETACHED;
-	else
-		__attr->detachstate = UPTHREAD_CREATE_JOINABLE;
-	return 0;
 }
 
 /* Return the previously set address for the stack.  */

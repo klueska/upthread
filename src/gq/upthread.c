@@ -201,15 +201,17 @@ void upthread_can_vcore_request(bool can)
 
 /* Pthread interface stuff and helpers */
 
-int upthread_attr_init(upthread_attr_t *a)
+/* Initialize thread attribute *ATTR with attributes corresponding to the
+   already running thread TH.  It shall be called on uninitialized ATTR
+   and destroyed with pthread_attr_destroy when no longer needed.  */
+int upthread_getattr_np (upthread_t __th, upthread_attr_t *__attr)
 {
- 	a->stacksize = UPTHREAD_STACK_SIZE;
-	a->detachstate = UPTHREAD_CREATE_JOINABLE;
-  	return 0;
-}
-
-int upthread_attr_destroy(upthread_attr_t *a)
-{
+	__attr->stackaddr = __th->stacktop - __th->stacksize;
+	__attr->stacksize = __th->stacksize;
+	if (__th->detached)
+		__attr->detachstate = UPTHREAD_CREATE_DETACHED;
+	else
+		__attr->detachstate = UPTHREAD_CREATE_JOINABLE;
 	return 0;
 }
 
@@ -235,17 +237,6 @@ static int get_next_pid(void)
 {
 	static uint32_t next_pid = 0;
 	return next_pid++;
-}
-
-int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize)
-{
-	attr->stacksize = stacksize;
-	return 0;
-}
-int upthread_attr_getstacksize(const upthread_attr_t *attr, size_t *stacksize)
-{
-	*stacksize = attr->stacksize;
-	return 0;
 }
 
 /* Do whatever init you want.  At some point call uthread_lib_init() and pass it
@@ -443,12 +434,6 @@ static void __pth_yield_cb(struct uthread *uthread, void *junk)
 int upthread_yield(void)
 {
 	uthread_yield(TRUE, __pth_yield_cb, 0);
-	return 0;
-}
-
-int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
-{
-	__attr->detachstate = __detachstate;
 	return 0;
 }
 
