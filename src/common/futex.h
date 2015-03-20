@@ -1,5 +1,5 @@
 #ifndef UPTHREAD_FUTEX_H
-#define UPTHREAD__FUTEX_H
+#define UPTHREAD_FUTEX_H
 
 #include <sys/time.h>
 
@@ -35,4 +35,4 @@ int futex_wake_some(int *uaddr, int count);
 }
 #endif
 
-#endif  /* _FUTEX_H */
+#endif  /* UPTHREAD_FUTEX_H */
