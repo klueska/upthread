@@ -20,14 +20,16 @@
 #define pthread_create upthread_create
 #define pthread_join   upthread_join
 #define pthread_yield  upthread_yield
+#define sched_yield    upthread_yield
 #define pthread_exit   upthread_exit
 #define pthread_detach upthread_detach
 #define pthread_self   upthread_self
 
 /* Mutex stuff. (Not all types supported) */
-#define PTHREAD_MUTEX_NORMAL    UPTHREAD_MUTEX_NORMAL
-#define PTHREAD_MUTEX_RECURSIVE UPTHREAD_MUTEX_RECURSIVE
-#define PTHREAD_MUTEX_DEFAULT   UPTHREAD_MUTEX_DEFAULT
+#define PTHREAD_MUTEX_NORMAL      UPTHREAD_MUTEX_NORMAL
+#define PTHREAD_MUTEX_RECURSIVE   UPTHREAD_MUTEX_RECURSIVE
+#define PTHREAD_MUTEX_DEFAULT     UPTHREAD_MUTEX_DEFAULT
+#define PTHREAD_MUTEX_INITIALIZER UPTHREAD_MUTEX_INITIALIZER
 
 #define pthread_mutexattr_t       upthread_mutexattr_t
 #define pthread_mutex_t           upthread_mutex_t
@@ -42,6 +44,8 @@
 #define pthread_mutex_destroy     upthread_mutex_destroy
 
 /* Condvar stuff. (Lots of stuff not supported yet) */
+#define PTHREAD_CONDVAR_INITIALIZER UPTHREAD_CONDVAR_INITIALIZER
+
 #define pthread_cond_t         upthread_cond_t
 #define pthread_condattr_t     upthread_condattr_t
 #define pthread_cond_init      upthread_cond_init
@@ -64,5 +68,17 @@
 #define pthread_key_delete  upthread_key_delete
 #define pthread_getspecific upthread_getspecific
 #define pthread_setspecific upthread_setspecific
+
+/* Common Stuff */
+#define pthread_equal         upthread_equal
+#define pthread_getattr_np    upthread_getattr_np
+#define pthread_attr_getstack upthread_attr_getstack
+
+/* Unsupported Stuff */
+#define pthread_mutex_timedlock upthread_mutex_timedlock
+#define pthread_cond_timedwait  upthread_cond_timedwait
+#define pthread_once_t          upthread_once_t
+#define pthread_once            upthread_once
+#define pthread_cancel          upthread_cancel
 
 #endif // UPTHREAD_PTHREAD_H

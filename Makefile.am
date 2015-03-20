@@ -16,6 +16,8 @@ LIB_CFILES = \
   @COMMONDIR@/semaphore.c \
   @COMMONDIR@/futex.c \
   @COMMONDIR@/dtls.c \
+  @COMMONDIR@/common.c \
+  @COMMONDIR@/unsupported.c \
   @VARIANTDIR@/upthread.c
 
 LIB_HFILES = \

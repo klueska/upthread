@@ -57,6 +57,7 @@ enum {
 };
 
 typedef struct {
+	void *stackaddr;
 	size_t stacksize;
 	int detachstate;
 } upthread_attr_t;
@@ -160,6 +161,25 @@ int upthread_key_create (upthread_key_t *__key,
 int upthread_key_delete (upthread_key_t __key);
 void *upthread_getspecific (upthread_key_t __key);
 int upthread_setspecific (upthread_key_t __key, const void *__pointer);
+
+/* Common stuff. */
+int upthread_equal(upthread_t __thread1, upthread_t __thread2);
+int upthread_getattr_np(upthread_t __th, upthread_attr_t *__attr);
+int upthread_attr_getstack(const upthread_attr_t *__attr,
+                           void **__stackaddr, size_t *__stacksize);
+
+/* Unsupported Stuff */
+extern int upthread_mutex_timedlock (upthread_mutex_t *__restrict __mutex,
+				    const struct timespec *__restrict
+				    __abstime) __THROWNL __nonnull ((1, 2));
+extern int upthread_cond_timedwait (upthread_cond_t *__restrict __cond,
+				   upthread_mutex_t *__restrict __mutex,
+				   const struct timespec *__restrict __abstime)
+     __nonnull ((1, 2, 3));
+typedef void *upthread_once_t;
+extern int upthread_once (upthread_once_t *__once_control,
+			 void (*__init_routine) (void)) __nonnull ((1, 2));
+extern int upthread_cancel (pthread_t __th);
 
 #ifdef __cplusplus
 }
