@@ -10,12 +10,14 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include "internal/assert.h"
 #include "upthread.h"
 #include "semaphore.h"
 #include "futex.h"
 
-int upthread_sem_init(upthread_sem_t *sem, int count)
+int upthread_sem_init(upthread_sem_t *sem, int pshared, int count)
 {
+  assert(pshared == 0);
   if(sem == NULL)
     return EINVAL;
   if(count < 0)
@@ -23,6 +25,11 @@ int upthread_sem_init(upthread_sem_t *sem, int count)
 
   sem->value = count;
   sem->nwaiters = 0;
+  return 0;
+}
+
+int upthread_sem_destroy(upthread_sem_t *sem)
+{
   return 0;
 }
 

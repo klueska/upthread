@@ -17,7 +17,10 @@ extern "C" {
 #endif
 
 /* Initialize a semaphore. */
-int upthread_sem_init(upthread_sem_t *sem, int count);
+int upthread_sem_init(upthread_sem_t *sem, int pshared, int count);
+
+/* Destroy a semaphore. */
+int upthread_sem_destroy(upthread_sem_t *sem);
 
 /* Wait on a semaphore. */
 int upthread_sem_wait(upthread_sem_t *sem);

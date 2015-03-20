@@ -50,7 +50,8 @@ LIB_HFILES = \
 endif
 
 LIB_COMPAT_HFILES = \
-  @COMMONDIR@/pthread.h
+  @COMMONDIR@/compatibility/semaphore.h \
+  @COMMONDIR@/compatibility/pthread.h
 
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
 LIB_INCLUDE_PATH = -I$(VARIANTDIR) -I$(COMMONDIR)

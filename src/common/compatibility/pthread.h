@@ -1,5 +1,5 @@
-#ifndef UPTHREAD_PTHREAD_H
-#define UPTHREAD_PTHREAD_H
+#ifndef UPTHREAD_COMPATIBILITY_PTHREAD_H
+#define UPTHREAD_COMPATIBILITY_PTHREAD_H
 
 #include <upthread/upthread.h>
 
@@ -63,10 +63,11 @@
 #define pthread_barrier_destroy     upthread_barrier_destroy
 
 /* Semaphore stuff. (Some stuff not supported yet) */
-#define sem_t    upthread_sem_t
-#define sem_init upthread_sem_init
-#define sem_wait upthread_sem_wait
-#define sem_post upthread_sem_post
+#define sem_t       upthread_sem_t
+#define sem_init    upthread_sem_init
+#define sem_destroy upthread_sem_destroy
+#define sem_wait    upthread_sem_wait
+#define sem_post    upthread_sem_post
 
 /* Get/Setspecific stuff. */
 #define pthread_key_t       upthread_key_t
