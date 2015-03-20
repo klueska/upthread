@@ -62,9 +62,6 @@ struct schedule_ops upthread_sched_ops = {
 	0, /* pth_spawn_thread, */
 };
 
-/* Publish our sched_ops, overriding the weak defaults */
-struct schedule_ops *sched_ops = &upthread_sched_ops;
-
 // Warning, this will reuse numbers eventually
 static int get_next_pid(void)
 {
@@ -514,6 +511,9 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	t->state = UPTH_RUNNING;
 	t->joiner = 0;
 	assert(t->id == 0);
+
+	/* Publish our sched_ops, overriding the defaults */
+	sched_ops = &upthread_sched_ops;
 
 	/* Handle syscall events. */
 	/* These functions are declared in parlib for simulating async syscalls on linux */

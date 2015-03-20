@@ -46,9 +46,6 @@ struct schedule_ops upthread_sched_ops = {
 	0, /* pth_spawn_thread, */
 };
 
-/* Publish our sched_ops, overriding the weak defaults */
-struct schedule_ops *sched_ops = &upthread_sched_ops;
-
 /* Static helpers */
 static void __upthread_free_stack(struct upthread_tcb *pt);
 static int __upthread_allocate_stack(struct upthread_tcb *pt);
@@ -266,6 +263,9 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	threads_active++;
 	STAILQ_INSERT_TAIL(&active_queue, t, next);
 	mcs_lock_unlock(&queue_lock, &qnode);
+
+	/* Publish our sched_ops, overriding the defaults */
+	sched_ops = &upthread_sched_ops;
 
 	/* Handle syscall events. */
 	/* These functions are declared in parlib for simulating async syscalls on linux */
