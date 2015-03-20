@@ -63,10 +63,10 @@
 #define pthread_barrier_destroy     upthread_barrier_destroy
 
 /* Semaphore stuff. (Some stuff not supported yet) */
-#define upthread_sem_t    sem_t
-#define upthread_sem_init sem_init
-#define upthread_sem_wait sem_wait
-#define upthread_sem_post sem_post
+#define sem_t    upthread_sem_t
+#define sem_init upthread_sem_init
+#define sem_wait upthread_sem_wait
+#define sem_post upthread_sem_post
 
 /* Get/Setspecific stuff. */
 #define pthread_key_t       upthread_key_t

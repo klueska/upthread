@@ -10,6 +10,8 @@
 #ifndef UPTHREAD_SEMAPHORE_H
 #define UPTHREAD_SEMAPHORE_H
 
+#include "upthread.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
