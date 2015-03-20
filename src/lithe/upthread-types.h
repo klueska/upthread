@@ -38,6 +38,7 @@ STAILQ_HEAD(upthread_queue, upthread_tcb);
 
 /* The core upthreads API */
 typedef struct {
+	void *stackaddr;
 	size_t stacksize;
 	int detachstate;
 } upthread_attr_t;
@@ -62,6 +63,9 @@ typedef lithe_sem_t upthread_sem_t;
 
 /* Get/Setpsecific stuff */
 typedef dtls_key_t* upthread_key_t;
+
+/* Unsupported stuff */
+typedef void *upthread_once_t;
 
 #ifdef __cplusplus
 }
