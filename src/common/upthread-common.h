@@ -40,6 +40,7 @@ int upthread_yield(void);
 void upthread_exit(void* ret);
 int upthread_detach(upthread_t __th);
 upthread_t upthread_self();
+int upthread_tid();
 
 /* Upthread mutexes */
 enum {

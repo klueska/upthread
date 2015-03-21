@@ -602,9 +602,9 @@ int upthread_detach(upthread_t thread)
 	return 0;
 }
 
-upthread_t upthread_self()
+int upthread_tid()
 {
-  return (struct upthread_tcb*)current_uthread;
+  return ((struct upthread_tcb*)current_uthread)->id;
 }
 
 static void pth_blockon_syscall(struct uthread* uthread, void *sysc)

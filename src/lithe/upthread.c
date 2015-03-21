@@ -260,8 +260,8 @@ int upthread_detach(upthread_t thread)
 	return 0;
 }
 
-upthread_t upthread_self()
+int upthread_tid()
 {
-  return (upthread_lithe_context_t*)current_uthread;
+  return ((lithe_context_t*)current_uthread)->id;
 }
 

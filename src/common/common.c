@@ -31,6 +31,11 @@ int upthread_attr_setdetachstate(upthread_attr_t *__attr, int __detachstate)
 	return 0;
 }
 
+upthread_t upthread_self()
+{
+	return (upthread_t)current_uthread;
+}
+
 /* Compare two thread identifiers.  */
 int upthread_equal(upthread_t __thread1, upthread_t __thread2)
 {
