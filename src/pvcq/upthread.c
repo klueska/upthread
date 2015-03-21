@@ -36,6 +36,7 @@ static volatile int next_queue_id = 0;
 
 /* Helper / local functions */
 static int get_next_pid(void);
+static void __upthread_generic_yield(upthread_t upthread);
 
 /* Linux Specific! (handle async syscall events) */
 static void pth_handle_syscall(struct event_msg *ev_msg, unsigned int ev_type);
@@ -316,6 +317,7 @@ void pth_thread_runnable(struct uthread *uthread)
 void pth_thread_paused(struct uthread *uthread)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	__upthread_generic_yield(upthread);
 	/* communicate to pth_thread_runnable */
 	upthread->state = UPTH_BLK_PAUSED;
 	/* At this point, you could do something clever, like put it at the front of
@@ -327,6 +329,7 @@ void pth_thread_paused(struct uthread *uthread)
 void pth_thread_has_blocked(struct uthread *uthread, int flags)
 {
 	struct upthread_tcb *upthread = (struct upthread_tcb*)uthread;
+	__upthread_generic_yield(upthread);
 	/* could imagine doing something with the flags.  For now, we just treat all
 	 * externally blocked reasons as 'MUTEX'.  Whatever we do here, we are
 	 * mostly communicating to our future selves in pth_thread_runnable(), which
@@ -478,7 +481,7 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 
 /* Helper that all upthread-controlled yield paths call.  Just does some
  * accounting. */
-void __upthread_generic_yield(struct upthread_tcb *upthread)
+static void __upthread_generic_yield(struct upthread_tcb *upthread)
 {
 }
 

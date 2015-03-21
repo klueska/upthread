@@ -34,8 +34,7 @@ static void block(struct uthread *uthread, void *arg)
 	upthread_cond_t *condvar = (upthread_cond_t *) arg;
 
 	assert(condvar);
-	__upthread_generic_yield(upthread);
-	upthread->state = UPTH_BLK_MUTEX;
+	uthread_has_blocked(uthread, UTH_EXT_BLK_MUTEX);
 	STAILQ_INSERT_TAIL(&condvar->queue, upthread, next);
 	upthread_mutex_unlock(condvar->waiting_mutex);
 	mcs_lock_unlock(&condvar->lock, condvar->waiting_qnode);

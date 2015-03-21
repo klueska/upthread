@@ -41,8 +41,6 @@ void upthread_exit(void* ret);
 int upthread_detach(upthread_t __th);
 upthread_t upthread_self();
 
-void __upthread_generic_yield(upthread_t upthread);
-
 /* Upthread mutexes */
 enum {
 	UPTHREAD_MUTEX_NORMAL,

@@ -47,8 +47,7 @@ static void __barrier_block(struct uthread *uthread, void *__blocked)
 
 	assert(blocked != NULL);
 	assert(blocked->len < blocked->maxlen);
-	__upthread_generic_yield(upthread);
-	upthread->state = UPTH_BLK_MUTEX;
+	uthread_has_blocked(uthread, UTH_EXT_BLK_MUTEX);
 	blocked->queue[blocked->len] = upthread;
 	blocked->len += 1;
 	mcs_lock_unlock(&blocked->mtx, blocked->qnode);

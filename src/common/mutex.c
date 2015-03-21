@@ -59,8 +59,7 @@ static void block(struct uthread *uthread, void *arg)
 	upthread_mutex_t *mutex = (upthread_mutex_t *) arg;
 
 	assert(mutex);
-	__upthread_generic_yield(upthread);
-	upthread->state = UPTH_BLK_MUTEX;
+	uthread_has_blocked(uthread, UTH_EXT_BLK_MUTEX);
 	STAILQ_INSERT_TAIL(&mutex->queue, upthread, next);
 	spin_pdr_unlock(&mutex->lock);
 }
