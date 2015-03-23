@@ -18,7 +18,7 @@ int upthread_cond_init(upthread_cond_t *c, const upthread_condattr_t *a)
 	if(c == NULL)
 		return EINVAL;
 
-	mcs_lock_init(&c->lock);
+	mcs_pdr_init(&c->lock);
 	STAILQ_INIT(&c->queue);
 	return 0;
 }
@@ -37,7 +37,7 @@ static void block(struct uthread *uthread, void *arg)
 	uthread_has_blocked(uthread, UTH_EXT_BLK_MUTEX);
 	STAILQ_INSERT_TAIL(&condvar->queue, upthread, next);
 	upthread_mutex_unlock(condvar->waiting_mutex);
-	mcs_lock_unlock(&condvar->lock, condvar->waiting_qnode);
+	mcs_pdr_unlock(&condvar->lock, condvar->waiting_qnode);
 }
 
 int upthread_cond_wait(upthread_cond_t *c, upthread_mutex_t *m)
@@ -48,7 +48,7 @@ int upthread_cond_wait(upthread_cond_t *c, upthread_mutex_t *m)
 		return EINVAL;
 
 	mcs_lock_qnode_t qnode = {0};
-	mcs_lock_lock(&c->lock, &qnode);
+	mcs_pdr_lock(&c->lock, &qnode);
 	c->waiting_mutex = m;
 	c->waiting_qnode = &qnode;
 	uthread_yield(true, block, c);
@@ -61,11 +61,11 @@ int upthread_cond_signal(upthread_cond_t *c)
 		return EINVAL;
 
 	mcs_lock_qnode_t qnode = {0};
-	mcs_lock_lock(&c->lock, &qnode);
+	mcs_pdr_lock(&c->lock, &qnode);
 	upthread_t upthread = STAILQ_FIRST(&c->queue);
 	if(upthread)
 		STAILQ_REMOVE_HEAD(&c->queue, next);
-	mcs_lock_unlock(&c->lock, &qnode);
+	mcs_pdr_unlock(&c->lock, &qnode);
 
 	if (upthread != NULL) {
 		uthread_runnable((struct uthread*)upthread);
@@ -80,16 +80,16 @@ int upthread_cond_broadcast(upthread_cond_t *c)
 
 	mcs_lock_qnode_t qnode = {0};
 	while(1) {
-		mcs_lock_lock(&c->lock, &qnode);
+		mcs_pdr_lock(&c->lock, &qnode);
 		upthread_t upthread = STAILQ_FIRST(&c->queue);
 		if(upthread)
 			STAILQ_REMOVE_HEAD(&c->queue, next);
 		else break;
-		mcs_lock_unlock(&c->lock, &qnode);
+		mcs_pdr_unlock(&c->lock, &qnode);
 		uthread_runnable((struct uthread*)upthread);
 		memset(&qnode, 0, sizeof(mcs_lock_qnode_t));
 	}
-	mcs_lock_unlock(&c->lock, &qnode);
+	mcs_pdr_unlock(&c->lock, &qnode);
 	return 0;
 }
 

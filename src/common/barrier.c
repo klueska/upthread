@@ -26,8 +26,8 @@ int upthread_barrier_init(upthread_barrier_t* barrier,
 	barrier->blocked[1].len = 0;
 	barrier->blocked[0].maxlen = n;
 	barrier->blocked[1].maxlen = n;
-	mcs_lock_init(&barrier->blocked[0].mtx);
-	mcs_lock_init(&barrier->blocked[1].mtx);
+	mcs_pdr_init(&barrier->blocked[0].mtx);
+	mcs_pdr_init(&barrier->blocked[1].mtx);
 	return 0;
 }
 
@@ -50,7 +50,7 @@ static void __barrier_block(struct uthread *uthread, void *__blocked)
 	uthread_has_blocked(uthread, UTH_EXT_BLK_MUTEX);
 	blocked->queue[blocked->len] = upthread;
 	blocked->len += 1;
-	mcs_lock_unlock(&blocked->mtx, blocked->qnode);
+	mcs_pdr_unlock(&blocked->mtx, blocked->qnode);
 }
 
 int upthread_barrier_wait(upthread_barrier_t* barrier)
@@ -80,12 +80,12 @@ int upthread_barrier_wait(upthread_barrier_t* barrier)
 		/* unblock those that are no longer running */
 		contextq_t *blocked = &barrier->blocked[wait];
 		mcs_lock_qnode_t qnode = {0};
-		mcs_lock_lock(&blocked->mtx, &qnode);
+		mcs_pdr_lock(&blocked->mtx, &qnode);
 		for (i = 0; i < blocked->len; i++) {
 			uthread_runnable((struct uthread*)blocked->queue[i]);
 		}
 		blocked->len = 0;
-		mcs_lock_unlock(&blocked->mtx, &qnode);
+		mcs_pdr_unlock(&blocked->mtx, &qnode);
 	} 
 	
 	/* wait for remaining to arrive */
@@ -99,12 +99,12 @@ int upthread_barrier_wait(upthread_barrier_t* barrier)
 			if (nstalls >= MAXSTALLS) {
 				contextq_t *blocked = &barrier->blocked[wait];
 				mcs_lock_qnode_t qnode = {0};
-				mcs_lock_lock(&blocked->mtx, &qnode);
+				mcs_pdr_lock(&blocked->mtx, &qnode);
 				if (barrier->signals[id].val == wait) {
 					blocked->qnode = &qnode;
 					uthread_yield(true, __barrier_block, (void *)blocked);
 				} else {
-					mcs_lock_unlock(&blocked->mtx, &qnode);
+					mcs_pdr_unlock(&blocked->mtx, &qnode);
 				}
 			}
 			cpu_relax();

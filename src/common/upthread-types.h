@@ -61,13 +61,13 @@ typedef struct upthread_mutex {
 
 /* Upthread condvars */
 typedef struct upthread_condvar {
-	mcs_lock_t lock;
+	mcs_pdr_lock_t lock;
 	mcs_lock_qnode_t *waiting_qnode;
 	upthread_mutex_t *waiting_mutex;
 	struct upthread_queue queue;
 } upthread_cond_t;
 #define UPTHREAD_CONDVAR_INITIALIZER(condvar) { \
-	.lock = MCS_LOCK_INIT, \
+	.lock = MCS_PDRLOCK_INIT, \
 	.waiting_qnode = NULL, \
 	.waiting_mutex = NULL, \
 	.queue = STAILQ_HEAD_INITIALIZER((condvar).queue) \
@@ -83,7 +83,7 @@ typedef union {
 typedef struct {
 	upthread_t *queue;
 	int len;
-	mcs_lock_t mtx;
+	mcs_pdr_lock_t mtx;
 	mcs_lock_qnode_t *qnode;
 	int maxlen;
 } contextq_t;

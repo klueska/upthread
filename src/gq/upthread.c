@@ -17,7 +17,7 @@
 
 struct upthread_queue ready_queue = STAILQ_HEAD_INITIALIZER(ready_queue);
 struct upthread_queue active_queue = STAILQ_HEAD_INITIALIZER(active_queue);
-struct mcs_lock queue_lock;
+struct mcs_pdr_lock queue_lock;
 int threads_ready = 0;
 int threads_active = 0;
 bool can_adjust_vcores = TRUE;
@@ -66,14 +66,14 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
 	 * had a new event come in, one that may make us able to get a new_thread */
 	do {mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-		mcs_lock_lock(&queue_lock, &qnode);
+		mcs_pdr_lock(&queue_lock, &qnode);
 		new_thread = STAILQ_FIRST(&ready_queue);
 		if (new_thread) {
 			STAILQ_REMOVE(&ready_queue, new_thread, upthread_tcb, next);
 			STAILQ_INSERT_TAIL(&active_queue, new_thread, next);
 			threads_active++;
 			threads_ready--;
-			mcs_lock_unlock(&queue_lock, &qnode);
+			mcs_pdr_unlock(&queue_lock, &qnode);
 			/* If you see what looks like the same uthread running in multiple
 			 * places, your list might be jacked up.  Turn this on. */
 			printd("[P] got uthread %08p on vc %d state %08p flags %08p\n",
@@ -82,7 +82,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 			       ((struct uthread*)new_thread)->flags);
 			break;
 		}
-		mcs_lock_unlock(&queue_lock, &qnode);
+		mcs_pdr_unlock(&queue_lock, &qnode);
 		/* no new thread, try to yield */
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
 		/* TODO: you can imagine having something smarter here, like spin for a
@@ -127,10 +127,10 @@ void pth_thread_runnable(struct uthread *uthread)
 	/* Insert the newly created thread into the ready queue of threads.
 	 * It will be removed from this queue later when vcore_entry() comes up */
     mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
+	mcs_pdr_lock(&queue_lock, &qnode);
 	STAILQ_INSERT_TAIL(&ready_queue, upthread, next);
 	threads_ready++;
-	mcs_lock_unlock(&queue_lock, &qnode);
+	mcs_pdr_unlock(&queue_lock, &qnode);
 	/* Smarter schedulers should look at the num_vcores() and how much work is
 	 * going on to make a decision about how many vcores to request. */
 	if (can_adjust_vcores)
@@ -235,7 +235,7 @@ static int get_next_pid(void)
  * a uthread representing thread0 (int main()) */
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
-	mcs_lock_init(&queue_lock);
+	mcs_pdr_init(&queue_lock);
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = parlib_aligned_alloc(ARCH_CL_SIZE,
 	                      sizeof(struct upthread_tcb));
@@ -254,10 +254,10 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 	assert(t->id == 0);
 	/* Put the new upthread (thread0) on the active queue */
 	mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);	/* arguably, we don't need these (_S mode) */
+	mcs_pdr_lock(&queue_lock, &qnode);	/* arguably, we don't need these (_S mode) */
 	threads_active++;
 	STAILQ_INSERT_TAIL(&active_queue, t, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
+	mcs_pdr_unlock(&queue_lock, &qnode);
 
 	/* Publish our sched_ops, overriding the defaults */
 	sched_ops = &upthread_sched_ops;
@@ -318,10 +318,10 @@ int upthread_create(upthread_t *thread, const upthread_attr_t *attr,
 static void __upthread_generic_yield(struct upthread_tcb *upthread)
 {
     mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-	mcs_lock_lock(&queue_lock, &qnode);
+	mcs_pdr_lock(&queue_lock, &qnode);
 	threads_active--;
 	STAILQ_REMOVE(&active_queue, upthread, upthread_tcb, next);
-	mcs_lock_unlock(&queue_lock, &qnode);
+	mcs_pdr_unlock(&queue_lock, &qnode);
 }
 
 /* Callback/bottom half of join, called from __uthread_yield (vcore context).
@@ -443,10 +443,10 @@ static void pth_blockon_syscall(struct uthread* uthread, void *sysc)
   upthread->state = UPTH_BLK_SYSC;
 
   mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
-  mcs_lock_lock(&queue_lock, &qnode);
+  mcs_pdr_lock(&queue_lock, &qnode);
   threads_active--;
   STAILQ_REMOVE(&active_queue, upthread, upthread_tcb, next);
-  mcs_lock_unlock(&queue_lock, &qnode);
+  mcs_pdr_unlock(&queue_lock, &qnode);
   /* Set things up so we can wake this thread up later */
   ((struct syscall*)sysc)->u_data = uthread;
 }
