@@ -51,7 +51,13 @@ typedef struct upthread_mutex {
 	int locked;
 	upthread_t owner;
 } upthread_mutex_t;
-#define UPTHREAD_MUTEX_INITIALIZER {{0}, {0}, {0}, 0, NULL}
+#define UPTHREAD_MUTEX_INITIALIZER(mutex) { \
+	.attr = {0}, \
+	.queue = STAILQ_HEAD_INITIALIZER((mutex).queue), \
+	.lock = SPINPDR_INITIALIZER, \
+	.locked = 0, \
+	.owner = NULL \
+}
 
 /* Upthread condvars */
 typedef struct upthread_condvar {
@@ -60,7 +66,12 @@ typedef struct upthread_condvar {
 	upthread_mutex_t *waiting_mutex;
 	struct upthread_queue queue;
 } upthread_cond_t;
-#define UPTHREAD_CONDVAR_INITIALIZER {{0}, NULL, NULL, {0}}
+#define UPTHREAD_CONDVAR_INITIALIZER(condvar) { \
+	.lock = MCS_LOCK_INIT, \
+	.waiting_qnode = NULL, \
+	.waiting_mutex = NULL, \
+	.queue = STAILQ_HEAD_INITIALIZER((condvar).queue) \
+}
 typedef void upthread_condattr_t;
 
 /* Upthread barriers */

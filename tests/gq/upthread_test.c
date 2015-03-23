@@ -11,7 +11,7 @@
 
 #define udelay(usec) usleep(usec)
 
-upthread_mutex_t lock = UPTHREAD_MUTEX_INITIALIZER;
+upthread_mutex_t lock = UPTHREAD_MUTEX_INITIALIZER(lock);
 #define printd(...) {}
 /*
 #define printd(...) \
