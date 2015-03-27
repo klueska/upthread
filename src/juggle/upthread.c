@@ -9,6 +9,7 @@
 #include <parlib/arch.h>
 #include <parlib/vcore.h>
 #include <parlib/alarm.h>
+#include <parlib/waitfreelist.h>
 #include "internal/assert.h"
 #include "upthread.h"
 
@@ -16,6 +17,8 @@
 
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
+
+struct wfl zombie_list = WFL_INITIALIZER(zombie_list);
 
 struct vc_mgmt {
 	struct upthread_queue tqueue;
@@ -72,27 +75,35 @@ static int get_next_pid(void)
 
 static struct upthread_tcb *__upthread_alloc(size_t stacksize)
 {
-	int offset = ROUNDUP(sizeof(struct upthread_tcb), ARCH_CL_SIZE);
-	offset += rand_r(&rseed(0)) % max_vcores() * ARCH_CL_SIZE;
-	stacksize = ROUNDUP(stacksize + offset, PGSIZE);
-	void *stackbot = mmap(
-		0, stacksize, PROT_READ|PROT_WRITE|PROT_EXEC,
-		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0
-	);
-	if (stackbot == MAP_FAILED)
-		abort();
-	struct upthread_tcb *upthread = stackbot + stacksize - offset;
-	upthread->stack_offset = offset;
-	upthread->stacktop = upthread;
-	upthread->stacksize = stacksize - offset;
+	// TODO wfl currently assumes stacksize the same for all contexts
+	struct upthread_tcb * upthread = wfl_remove(&zombie_list);
+	if (!upthread) {
+		int offset = ROUNDUP(sizeof(struct upthread_tcb), ARCH_CL_SIZE);
+		offset += rand_r(&rseed(0)) % max_vcores() * ARCH_CL_SIZE;
+		stacksize = ROUNDUP(stacksize + offset, PGSIZE);
+		void *stackbot = mmap(
+			0, stacksize, PROT_READ|PROT_WRITE|PROT_EXEC,
+			MAP_PRIVATE|MAP_ANONYMOUS, -1, 0
+		);
+		if (stackbot == MAP_FAILED)
+			abort();
+		upthread = stackbot + stacksize - offset;
+		upthread->stack_offset = offset;
+		upthread->stacktop = upthread;
+		upthread->stacksize = stacksize - offset;
+	}
 	return upthread;
 }
 
 static void __upthread_free(struct upthread_tcb *pt)
 {
-	int stacksize = pt->stacksize + pt->stack_offset;
-	int ret = munmap(pt->stacktop - pt->stacksize, stacksize);
-	assert(!ret);
+	if (wfl_size(&zombie_list) < 1000) {
+		wfl_insert(&zombie_list, pt);
+	} else {
+		int stacksize = pt->stacksize + pt->stack_offset;
+		int ret = munmap(pt->stacktop - pt->stacksize, stacksize);
+		assert(!ret);
+	}
 }
 
 int get_next_queue_id_basic(struct upthread_tcb *upthread)
