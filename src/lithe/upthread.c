@@ -219,7 +219,7 @@ static void context_exit(lithe_sched_t *__this, lithe_context_t *context)
 	upthread_lithe_context_t *upthread = (upthread_lithe_context_t *)context;
 	upthread_lithe_context_t *temp_pth = 0;
 	/* Down the absolute hart count. */
-	lithe_fork_join_hart_request_inc(&upthread_lithe_sched->sched, -1);
+	lithe_hart_request(-1);
 	/* Destroy the upthread */
 	lithe_fork_join_context_cleanup(&upthread->context);
 	/* TODO: race on detach state (see join) */
