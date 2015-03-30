@@ -18,8 +18,8 @@ struct upthread_lithe_sched {
 };
 typedef struct upthread_lithe_sched upthread_lithe_sched_t;
 
-upthread_lithe_sched_t *upthread_lithe_sched;
-struct wfl context_zombie_list = WFL_INITIALIZER(context_zombie_list);
+static upthread_lithe_sched_t *upthread_lithe_sched;
+static struct wfl context_zombie_list = WFL_INITIALIZER(context_zombie_list);
 
 static void context_exit(lithe_sched_t *__this, lithe_context_t *context);
 
