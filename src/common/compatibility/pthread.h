@@ -1,7 +1,7 @@
 #ifndef UPTHREAD_COMPATIBILITY_PTHREAD_H
 #define UPTHREAD_COMPATIBILITY_PTHREAD_H
 
-#include <upthread/upthread.h>
+#include "../upthread.h"
 
 /* Detach state. */
 #define PTHREAD_CREATE_JOINABLE UPTHREAD_CREATE_JOINABLE
