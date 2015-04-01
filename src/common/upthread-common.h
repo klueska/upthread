@@ -36,7 +36,7 @@ int upthread_attr_setstacksize(upthread_attr_t *attr, size_t stacksize);
 int upthread_create(upthread_t *, const upthread_attr_t *,
                    void *(*)(void *), void *);
 int upthread_join(upthread_t, void **);
-int upthread_yield(void);
+int upthread_yield(void) __THROW;
 void upthread_exit(void* ret);
 int upthread_detach(upthread_t __th);
 upthread_t upthread_self();
