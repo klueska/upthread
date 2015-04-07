@@ -21,6 +21,7 @@ struct mcs_pdr_lock queue_lock;
 int threads_ready = 0;
 int threads_active = 0;
 bool can_adjust_vcores = TRUE;
+static int max_spin_count = 100;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -65,6 +66,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	/* Try to get a thread.  If we get one, we'll break out and run it.  If not,
 	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
 	 * had a new event come in, one that may make us able to get a new_thread */
+	int spin_count = max_spin_count;
 	do {mcs_lock_qnode_t qnode = MCS_QNODE_INIT;
 		mcs_pdr_lock(&queue_lock, &qnode);
 		new_thread = STAILQ_FIRST(&ready_queue);
@@ -87,7 +89,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 		printd("[P] No threads, vcore %d is yielding\n", vcore_id());
 		/* TODO: you can imagine having something smarter here, like spin for a
 		 * bit before yielding (or not at all if you want to be greedy). */
-		if (can_adjust_vcores)
+		if (can_adjust_vcores && !(spin_count--))
 			vcore_yield(FALSE);
 		handle_events();
 	} while (1);
@@ -235,6 +237,11 @@ static int get_next_pid(void)
  * a uthread representing thread0 (int main()) */
 static void __attribute__((constructor)) upthread_lib_init(void)
 {
+	/* Update the spin count if passed in through the environment. */
+	const char *spin_count_string = getenv("UPTHREAD_SPIN_COUNT");
+	if (spin_count_string != NULL)
+		max_spin_count = atoi(spin_count_string);
+
 	mcs_pdr_init(&queue_lock);
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = parlib_aligned_alloc(ARCH_CL_SIZE,

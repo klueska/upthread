@@ -36,6 +36,7 @@ static bool can_adjust_vcores = TRUE;
 static bool ss_yield = TRUE;
 static int nr_vcores = 0;
 static volatile int next_queue_id = 0;
+static int max_spin_count = 100;
 
 /* Helper / local functions */
 static int get_next_pid(void);
@@ -258,7 +259,7 @@ void __attribute__((noreturn)) pth_sched_entry(void)
 	/* Try to get a thread.  If we get one, we'll break out and run it.  If not,
 	 * we'll try to yield.  vcore_yield() might return, if we lost a race and
 	 * had a new event come in, one that may make us able to get a new_thread */
-	int spin_count = 100;
+	int spin_count = max_spin_count;
 	do {
 		if ((new_thread = __pth_thread_dequeue()))
 			break;
@@ -423,6 +424,11 @@ static void __attribute__((constructor)) upthread_lib_init(void)
 		rseed(i) = i;
 	}
 	upthread_set_num_vcores(max_vcores());
+
+	/* Update the spin count if passed in through the environment. */
+	const char *spin_count_string = getenv("UPTHREAD_SPIN_COUNT");
+	if (spin_count_string != NULL)
+		max_spin_count = atoi(spin_count_string);
 
 	/* Create a upthread_tcb for the main thread */
 	upthread_t t = __upthread_alloc(0);
