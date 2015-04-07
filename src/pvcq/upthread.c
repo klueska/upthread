@@ -15,7 +15,7 @@
 #define printd(...) 
 //#define printd(...) printf(__VA_ARGS__)
 
-struct wfl zombie_list = WFL_INITIALIZER(zombie_list);
+static struct wfl zombie_list = WFL_INITIALIZER(zombie_list);
 
 struct vc_mgmt {
 	struct upthread_queue tqueue;
