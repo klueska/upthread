@@ -76,6 +76,9 @@
 #define pthread_getspecific upthread_getspecific
 #define pthread_setspecific upthread_setspecific
 
+/* Signal stuff. (None of it supported yet though) */
+#define pthread_sigmask  upthread_sigmask
+
 /* Common Stuff */
 #define pthread_equal         upthread_equal
 #define pthread_getattr_np    upthread_getattr_np

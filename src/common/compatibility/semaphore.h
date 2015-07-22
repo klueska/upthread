@@ -6,7 +6,7 @@
 #ifndef UPTHREAD_COMPATIBILITY_SEMAPHORE_H
 #define UPTHREAD_COMPATIBILITY_SEMAPHORE_H
 
-#include <upthread/semaphore.h>
+#include "../upthread/semaphore.h"
 #include "pthread.h"
 
 #endif // UPTHREAD_COMPATIBILITY_SEMAPHORE_H

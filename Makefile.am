@@ -36,6 +36,7 @@ endif
 if LITHE_VARIANT
 LIB_HFILES = \
   @COMMONDIR@/semaphore.h \
+  @COMMONDIR@/signal.h \
   @VARIANTDIR@/futex.h \
   @VARIANTDIR@/upthread-types.h \
   @COMMONDIR@/upthread-common.h \
@@ -43,6 +44,7 @@ LIB_HFILES = \
 else
 LIB_HFILES = \
   @COMMONDIR@/semaphore.h \
+  @COMMONDIR@/signal.h \
   @COMMONDIR@/futex.h \
   @COMMONDIR@/upthread-types.h \
   @COMMONDIR@/upthread-common.h \
@@ -51,6 +53,7 @@ endif
 
 LIB_COMPAT_HFILES = \
   @COMMONDIR@/compatibility/semaphore.h \
+  @COMMONDIR@/compatibility/signal.h \
   @COMMONDIR@/compatibility/pthread.h
 
 LIB_FILES = $(LIB_CFILES) $(LIB_HFILES)
